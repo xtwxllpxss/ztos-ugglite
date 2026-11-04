@@ -1,0 +1,12 @@
+[Unit]
+Description=Writing the offset between system time and RTC to a file
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target
+
+[Service]
+Type=oneshot
+TimeoutSec=0
+ExecStart=/usr/local/sbin/swclock-offset-shutdown
+
+[Install]
+WantedBy=shutdown.target reboot.target halt.target

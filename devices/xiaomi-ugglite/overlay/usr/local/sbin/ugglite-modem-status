@@ -1,0 +1,53 @@
+#!/bin/sh
+# Publish ModemManager's read model using ztmetro's existing status contract.
+# No commands are forwarded to the radio; call/data controls need a separate backend.
+set -eu
+status=/run/ztoscorenetworking/status
+install -d -m 0755 /run/ztoscorenetworking
+report=
+if systemctl is-active --quiet ModemManager.service; then
+    modem=$(timeout 3 mmcli -L 2>/dev/null | sed -n 's@.*\(/org/freedesktop/ModemManager1/Modem/[0-9][0-9]*\).*@\1@p' | head -n 1)
+    if [ -n "$modem" ]; then
+        report=$(timeout 3 mmcli -m "$modem" --output-keyvalue 2>/dev/null) || report=
+    fi
+fi
+printf '%s\n' "$report" | awk '
+    BEGIN { sim="unknown"; operator=""; reg="unknown"; tech=""; quality=0; connected=0; airplane=0 }
+    {
+        split_at=index($0," : "); if (!split_at) next
+        key=substr($0,1,split_at-1); sub(/[[:space:]]+$/,"",key)
+        value=substr($0,split_at+3); sub(/^[[:space:]]+/,"",value)
+        if (key=="modem.generic.state") { state=value; connected=(value=="connected") }
+        else if (key=="modem.generic.sim" && value ~ /^\/org\//) sim="ready"
+        else if (key=="modem.3gpp.operator-name" && value!="--") operator=value
+        else if (key=="modem.3gpp.registration-state" && value!="--") reg=value
+        else if (key=="modem.generic.signal-quality.value") quality=value+0
+        else if (key ~ /^modem.generic.access-technologies.value\[/) {
+            if (value ~ /5gnr/) tech="5G"
+            else if (tech!="5G" && value ~ /lte/) tech="4G"
+            else if (tech=="" && value ~ /hspa|umts|wcdma/) tech="3G"
+            else if (tech=="" && value ~ /edge/) tech="E"
+            else if (tech=="" && value ~ /gprs|gsm/) tech="G"
+        }
+        else if (key=="modem.generic.power-state") airplane=(value=="off" || value=="low")
+    }
+    END {
+        registered=(reg=="home" || reg=="roaming")
+        bars=registered ? int((quality+19)/20) : 0
+        if (bars<0) bars=0; if (bars>5) bars=5
+        if (registered) { sim="ready"; airplane=0 }
+        if (!registered) tech=""
+        printf "sim=%s\noperator=%s\nbars=%d\nregistered=%s\ntech=%s\nairplane=%d\ndata=%d\ndata_on=%d\n", sim,operator,bars,reg,tech,airplane,connected,connected
+    }
+' > "$status.new"
+chmod 0644 "$status.new"
+changed=1
+cmp -s "$status" "$status.new" && changed=0
+mv "$status.new" "$status"
+# Notify only on a change. Opening a session FIFO must never block a system unit.
+if [ "$changed" -eq 1 ]; then
+    for pipe in /run/user/*/ztmetro.ctl; do
+        [ -p "$pipe" ] || continue
+        printf 'modem\n' | dd of="$pipe" oflag=nonblock status=none 2>/dev/null || true
+    done
+fi

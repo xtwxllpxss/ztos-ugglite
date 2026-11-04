@@ -1,0 +1,15 @@
+[Unit]
+Description=Publish Qualcomm mobile network status for ztmetro
+After=ModemManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ugglite-modem-status
+TimeoutStartSec=8
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/ztoscorenetworking
+RuntimeDirectory=ztoscorenetworking
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes

@@ -1,0 +1,38 @@
+#!/usr/bin/env sh
+
+# SPDX-FileCopyrightText: 2021 Jakob Hauser <jahau@rocketmail.com>
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# This shell scripts writes the offset between 'hwclock' and 'swclock'
+# to a file.
+#
+# To keep the offset calculation simple, the epoch timestamp is used.
+#
+# The system time is read by command "date". The RTC is read from the
+# sysfs node.
+
+rtc_sys_node="/sys/class/rtc/rtc0/since_epoch"
+offset_directory="/var/lib/swclock-offset"
+
+# check presence of rtc sys node
+if [ ! -f $rtc_sys_node ]; then
+	echo "rtc sys node not found, skipping"
+	exit 0
+fi
+
+# check presence of offset directory
+if [ ! -d $offset_directory ]; then
+	mkdir -p $offset_directory
+fi
+
+# calculate offset
+# NOTE: use short args here so that it works with 'busybox date'!
+swclock_epoch=$(date -u +%s)
+hwclock_epoch=$(cat $rtc_sys_node)
+offset_epoch=$((swclock_epoch - hwclock_epoch))
+
+# write offset file
+echo $offset_epoch > $offset_directory/offset-storage
+# make sure offset gets written to disk
+sync

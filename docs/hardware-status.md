@@ -44,6 +44,22 @@ work.
   PipeWire process, so required-open returns `-ENODEV`. It was rolled back and
   must not be reintroduced as a fix.
 
+## Works — modem registration (no data claim)
+
+- **Cellular registration.** After a RAM boot the MSS firmware runs, `qcom_bam_dmux`
+  binds, QRTR/`rmtfs` serve the modem's storage from a RAM shadow, WWAN DPM and a
+  USIM are selected, and ModemManager reports `state=registered`, LTE,
+  `registration=home`. The device owner confirmed the operator name and four bars
+  in the UI. Two device-specific requirements were found: without USIM selection
+  this unit reports sim-missing although the card is present, and without WWAN DPM
+  ModemManager creates no modem object. Recipe, service split, scope limits and
+  licence pins: [docs/modem.md](docs/modem.md).
+- **Offline time.** `swclock-offset` keeps system time correct with NTP masked by
+  storing `UTC − raw RTC` and only *reading* the RTC. Verified with
+  `NTPSynchronized=no` and `swclock boot rc=0`; the system clock stayed within a
+  second of the host. A PMIC power loss or RTC reset can invalidate the stored
+  offset and upstream 0.3.0 does not detect it.
+
 ## Unsafe
 
 - **RTC write.** Writing the hardware clock is unsafe on this device: two capture
@@ -53,7 +69,7 @@ work.
 
 ## Unverified
 
-- Modem / cellular, camera, suspend, and anything not listed above. No claims.
+- Modem **data session/APN, SMS, calls, call audio and GNSS** (registration itself is listed above), camera, suspend, and anything not listed above. No claims.
 
 ## Evidence
 

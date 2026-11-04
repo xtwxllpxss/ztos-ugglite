@@ -1,0 +1,347 @@
+#!/bin/sh
+# Модем ugglite: разделённые шаги — регистрация драйвера и (отдельно) один boot MSS.
+#
+# 2026-11-04: --probe-driver ВЫПОЛНЕН (modprobe rc=0, remoteproc 4080000.remoteproc
+# state=offline, firmware НЕ читалась, firmware_class.path не менялся, mount не было).
+# --start-managed retains MSS for systemd after the approved RAM-shadow
+# storage service is running; --cleanup stops MSS before releasing firmware.
+#
+# Границы:
+#  - монтируется только by-partlabel/modem (vfat, ro,nosuid,nodev,noexec,umask=077);
+#  - читаются только image/mba.mbn, image/modem.mdt, image/modem.bXX;
+#  - helper сам не открывает EFS; --start-managed использует отдельно
+#    разрешённую службу rmtfs -r с четырьмя EFS-разделами, без persist;
+#  - --probe-driver НЕ трогает firmware_class.path и НЕ монтирует раздел;
+#  - --boot-once делает РОВНО одну попытку start без повторов;
+#  - teardown: stop MSS -> restore fwpath -> umount; stop пишется только в
+#    rproc модема по имени, никогда в adsp/wcnss;
+#  - если MSS не удалось остановить, fwpath и mount остаются (fail closed);
+#  - INT/TERM/HUP во время активного firmware-запроса откладываются (DEFER),
+#    очистка идёт только из безопасной точки.
+#
+# Использование:
+#   sh provision-modem-firmware.sh --check         # mount ro + хеши/полнота, без modprobe
+#   sh provision-modem-firmware.sh --probe-driver  # только регистрация драйвера MSS
+#   sh ugglite-modem --start-managed          # approved RAM-shadow EFS service
+#   sh provision-modem-firmware.sh --boot-once     # ОДИН запуск MSS (аппаратное действие)
+#   sh provision-modem-firmware.sh --restore-path  # вернуть сохранённый fwpath
+#   sh provision-modem-firmware.sh --cleanup       # stop (если запускал скрипт) + restore + umount
+#
+# Коды возврата:
+#   0 успех; 2 usage/preconditions; 3-6 проверка firmware; 7 modprobe/регистрация;
+#   8 teardown небезопасен (rproc остался активен); 10 start не поднялся; 11 start error.
+
+set -u
+MNT=/run/modem-ro
+PART=/dev/disk/by-partlabel/modem
+FWPATH=/sys/module/firmware_class/parameters/path
+FWSAVE=/run/modem-fwpath.orig
+RPROC_NAME=4080000.remoteproc
+BOOT_WAIT=25
+EXPECT_MBA=cef501f55352173ef96fa5d5a97386ab58a2aff7317f518fe26fc49d6d7befcb
+EXPECT_MDT=ae88c740516400fa2720fe91e4f20218c3532b61aa81ce93c53c929d40832491
+MODE=${1:-}
+
+DEFER=0
+ACTIVE_FW=0
+MOUNTED=0
+FWSAVED=0
+STARTED=0
+ALLOW_STOP=0
+
+say() { echo "$*"; }
+
+on_signal() {
+    DEFER=1
+    say "signal: deferred; no interrupt of active firmware request"
+}
+
+# rproc ищется по имени: индексы remoteprocN меняются при загрузке модулей.
+rproc_dir() {
+    for d in /sys/class/remoteproc/remoteproc*; do
+        [ -e "$d/name" ] || continue
+        [ "$(cat "$d/name")" = "$1" ] && { echo "$d"; return 0; }
+    done
+    return 1
+}
+
+rproc_state() {
+    d=$(rproc_dir "$RPROC_NAME") || { echo absent; return 0; }
+    cat "$d/state"
+}
+
+# Байт-в-байт, включая завершающий newline (command substitution его срезает).
+save_fwpath() {
+    [ ! -e "$FWSAVE" ] || { say "FAIL: firmware path already owned"; return 1; }
+    cat "$FWPATH" > "$FWSAVE.tmp" && chmod 600 "$FWSAVE.tmp" &&
+        mv "$FWSAVE.tmp" "$FWSAVE" || return 1
+    FWSAVED=1
+}
+
+restore_fwpath() {
+    if [ -e "$FWSAVE" ]; then
+        cat "$FWSAVE" > "$FWPATH" || return 1
+        rm -f "$FWSAVE"
+        say "fwpath restored byte-exact"
+    else
+        say "fwpath: nothing to restore (this run did not change it)"
+    fi
+    return 0
+}
+
+umount_part() {
+    [ "$MOUNTED" -eq 1 ] || return 0
+    umount "$MNT" || return 1
+    rmdir "$MNT" 2>/dev/null || true
+    MOUNTED=0
+    say "unmounted $MNT"
+    return 0
+}
+
+# stop -> restore -> umount. Стоп только для MSS и только если его запускал
+# этот прогон (STARTED=1) либо это явный --cleanup. Если stop не удался,
+# mount/fwpath не снимаются: активный firmware-запрос не должен остаться без файлов.
+teardown() {
+    if [ "$ALLOW_STOP" -eq 1 ] || [ "$STARTED" -eq 1 ]; then
+        st=$(rproc_state)
+        case "$st" in
+            offline|absent) : ;;
+            *)
+                say "teardown: MSS state=$st, requesting stop"
+                d=$(rproc_dir "$RPROC_NAME") && echo stop > "$d/state" 2>/dev/null || true
+                i=0
+                while [ "$i" -lt 10 ]; do
+                    st=$(rproc_state)
+                    [ "$st" = offline ] && break
+                    sleep 1
+                    i=$((i + 1))
+                done
+                if [ "$st" != offline ]; then
+                    say "FAIL: MSS still state=$st; fwpath/mount kept (no unmount under active fw request)"
+                    return 1
+                fi
+                say "teardown: MSS offline" ;;
+        esac
+    fi
+    if [ "$FWSAVED" -eq 1 ] || [ "$ALLOW_STOP" -eq 1 ]; then
+        restore_fwpath || { say "FAIL: fwpath restore failed; mount kept"; return 1; }
+    fi
+    umount_part || { say "WARN: umount failed"; return 1; }
+    return 0
+}
+
+cleanup() {
+    rc=$?
+    trap - EXIT INT TERM HUP
+    # Дождаться выхода из переходного состояния, не прерывая kernel-запрос.
+    if [ "$ACTIVE_FW" -eq 1 ]; then
+        i=0
+        while [ "$i" -lt "$BOOT_WAIT" ]; do
+            st=$(rproc_state)
+            case "$st" in
+                starting|stopping|start) sleep 1; i=$((i + 1)) ;;
+                *) break ;;
+            esac
+        done
+        ACTIVE_FW=0
+    fi
+    teardown || rc=8
+    exit "$rc"
+}
+
+need_root() { [ "$(id -u)" -eq 0 ] || { say "FAIL: root required"; exit 2; }; }
+
+preconditions() {
+    [ -e "$PART" ] || { say "FAIL: $PART missing"; exit 2; }
+    adsp_state=absent
+    for d in /sys/class/remoteproc/remoteproc*; do
+        [ -e "$d/name" ] || continue
+        [ "$(cat "$d/name")" = adsp ] && adsp_state=$(cat "$d/state")
+    done
+    [ "$adsp_state" = running ] || { say "FAIL: adsp state='${adsp_state:-absent}' (need running)"; exit 2; }
+    wcnss_state=absent
+    for d in /sys/class/remoteproc/remoteproc*; do
+        [ -e "$d/name" ] || continue
+        nm=$(cat "$d/name")
+        case "$nm" in
+            *wcnss*|a204000*) wcnss_state=$(cat "$d/state") ;;
+        esac
+    done
+    [ "$wcnss_state" = running ] || { say "FAIL: wcnss state='${wcnss_state:-absent}' (need running)"; exit 2; }
+    if [ "$MODE" = --start-managed ]; then
+        systemctl is-active --quiet ztos-modem-storage.service || {
+            say "FAIL: approved RAM-shadow storage service is not active"; exit 2;
+        }
+        say "preconditions: adsp=running wcnss=running storage=approved-shadow part=present"
+    else
+        if systemctl is-active --quiet ztos-modem-storage.service ||
+           ps -eo comm= 2>/dev/null | grep -Eq '^(rmtfs|ugglite-rmtfs)$'; then
+            say "FAIL: storage service running; use the approved --start-managed path"; exit 2
+        fi
+        say "preconditions: adsp=running wcnss=running storage=absent part=present"
+    fi
+}
+
+mount_verify() {
+    mountpoint -q "$MNT" && { say "FAIL: firmware mount already owned"; exit 2; }
+    mkdir -p "$MNT"
+    mount -t vfat -o ro,nosuid,nodev,noexec,umask=077 "$PART" "$MNT" || { say "FAIL: mount"; exit 3; }
+    MOUNTED=1
+    for f in mba.mbn modem.mdt; do
+        [ -f "$MNT/image/$f" ] || { say "FAIL: $f absent"; exit 3; }
+    done
+    h1=$(sha256sum "$MNT/image/mba.mbn" | cut -d' ' -f1)
+    h2=$(sha256sum "$MNT/image/modem.mdt" | cut -d' ' -f1)
+    [ "$h1" = "$EXPECT_MBA" ] || { say "FAIL: mba.mbn hash $h1"; exit 4; }
+    [ "$h2" = "$EXPECT_MDT" ] || { say "FAIL: modem.mdt hash $h2"; exit 5; }
+    missing=0
+    for n in 03 05 06 07 08 09 10 11 12 13 17 18 19 20 21 22; do
+        [ -f "$MNT/image/modem.b$n" ] || { say "MISSING modem.b$n"; missing=$((missing + 1)); }
+    done
+    say "segments_checked=16 missing=$missing"
+    [ "$missing" -eq 0 ] || exit 6
+}
+
+report_registration() {
+    say "--- remoteproc ---"
+    for d in /sys/class/remoteproc/remoteproc*; do
+        [ -e "$d/name" ] || continue
+        say "$(basename "$d") name=$(cat "$d/name") state=$(cat "$d/state")"
+    done
+    d=$(rproc_dir "$RPROC_NAME") || { say "FAIL: $RPROC_NAME not registered"; return 1; }
+    drv=$(readlink -f "$d/device/driver" 2>/dev/null)
+    say "mss_driver=${drv:-none}"
+    say "mss_firmware=$(cat "$d/firmware" 2>/dev/null || echo none)"
+    if [ -d "/sys/bus/platform/devices/${RPROC_NAME}:bam-dmux" ]; then
+        bdrv=$(readlink -f "/sys/bus/platform/devices/${RPROC_NAME}:bam-dmux/driver" 2>/dev/null)
+        say "bam-dmux=present driver=${bdrv:-none}"
+    else
+        say "bam-dmux=absent"
+    fi
+    say "fwpath=[$(cat "$FWPATH")]"
+    return 0
+}
+
+do_probe() {
+    preconditions
+    st=$(rproc_state)
+    if [ "$st" != absent ]; then
+        say "FAIL: $RPROC_NAME already registered (state=$st); no second modprobe"
+        exit 7
+    fi
+    modprobe qcom_q6v5_mss
+    RC_MOD=$?
+    say "modprobe_rc=$RC_MOD"
+    sleep 3
+    report_registration || RC_MOD=7
+    st=$(rproc_state)
+    say "post_probe_state=$st"
+    [ "$st" = offline ] || { say "FAIL: expected offline after probe, got $st"; exit 7; }
+    [ "$RC_MOD" -eq 0 ] || exit 7
+    say "PROBE OK: driver bound, rproc offline, firmware NOT loaded, fwpath untouched, no mount"
+    exit 0
+}
+
+# Passive QRTR discovery: aliases only, no QMI commands, SIM/NV or identifiers.
+report_qrtr() {
+    say "--- QRTR service aliases ---"
+    for q in /sys/bus/qrtr/devices/*; do
+        [ -e "$q/uevent" ] || continue
+        say "$(basename "$q") $(grep '^MODALIAS=' "$q/uevent")"
+    done
+    say "--- modem transport devices ---"
+    for q in /sys/class/wwan/* /sys/class/net/rmnet* /sys/class/net/wwan*; do
+        [ -e "$q" ] && basename "$q"
+    done
+    return 0
+}
+
+do_boot_once() {
+    say "MSS mode=$MODE: одна попытка запуска, без повторов"
+    [ ! -e "$FWSAVE" ] || { say "FAIL: firmware path already owned"; exit 2; }
+    preconditions
+    st=$(rproc_state)
+    case "$st" in
+        offline) ALLOW_STOP=1 ;;
+        absent) ;;
+        *) say "FAIL: MSS state=$st before boot (need offline/absent)"; exit 2 ;;
+    esac
+    say "--- before MSS ---"
+    report_qrtr
+    mount_verify
+    save_fwpath || { say "FAIL: cannot save fwpath"; exit 2; }
+    printf '%s' "$MNT/image" > "$FWPATH"
+    say "fwpath=[$(cat "$FWPATH")] (saved to $FWSAVE)"
+    if [ "$(rproc_state)" = absent ]; then
+        modprobe qcom_q6v5_mss
+        RC_MOD=$?
+        say "modprobe_rc=$RC_MOD"
+        [ "$RC_MOD" -eq 0 ] || exit 7
+        report_registration || true
+    fi
+    d=$(rproc_dir "$RPROC_NAME") || { say "FAIL: mss rproc absent"; exit 7; }
+    STARTED=1
+    ACTIVE_FW=1
+    echo start > "$d/state" 2>/dev/null
+    RC_START=$?
+    say "start_rc=$RC_START"
+    i=0
+    while [ "$i" -lt "$BOOT_WAIT" ]; do
+        st=$(cat "$d/state")
+        case "$st" in
+            running|offline) break ;;
+        esac
+        if [ "$DEFER" -eq 1 ]; then
+            say "defer: leaving wait loop; request still in kernel, not interrupted"
+            break
+        fi
+        sleep 1
+        i=$((i + 1))
+    done
+    st=$(cat "$d/state")
+    case "$st" in
+        running|offline) ACTIVE_FW=0 ;;
+    esac
+    say "post_boot_state=$st"
+    say "--- dmesg (q6v5/mba/modem/remoteproc) ---"
+    dmesg | grep -iE 'q6v5|remoteproc|mba|modem\.mdt|bam-dmux' | tail -25 || true
+    if [ "$st" = running ]; then
+        say "BOOT OBSERVED: state=running (НЕ доказательство QMI/данных)"
+        if [ "$MODE" = --start-managed ]; then
+            trap - EXIT INT TERM HUP
+            say "MSS retained by systemd; firmware mount/path owned until --cleanup"
+            exit 0
+        fi
+        sleep 5
+        report_qrtr
+        say "after_observation_state=$(cat "$d/state")"
+        exit 0
+    fi
+    [ "$RC_START" -ne 0 ] && exit 11
+    exit 10
+}
+
+case "$MODE" in
+--probe-driver) need_root; trap cleanup EXIT; do_probe ;;
+--start-managed) need_root; trap cleanup EXIT; trap on_signal INT TERM HUP; do_boot_once ;;
+--boot-once)    need_root; trap cleanup EXIT; trap on_signal INT TERM HUP; do_boot_once ;;
+--check)        need_root; trap cleanup EXIT; preconditions; mount_verify; say "CHECK OK" ;;
+--restore-path)
+    need_root
+    case $(rproc_state) in offline|absent) ;; *) say "FAIL: MSS is active; stop before restoring path"; exit 8 ;; esac
+    [ -e "$FWSAVE" ] || { say "FAIL: no saved copy at $FWSAVE"; exit 2; }
+    restore_fwpath && say "fwpath=[$(cat "$FWPATH")]" ;;
+--cleanup)
+    need_root; ALLOW_STOP=1
+    if mountpoint -q "$MNT"; then
+        source=$(findmnt -n -o SOURCE --mountpoint "$MNT")
+        [ "$(readlink -f "$source")" = "$(readlink -f "$PART")" ] || {
+            say "FAIL: unexpected mount source; no teardown"; exit 8;
+        }
+        MOUNTED=1
+    fi
+    trap cleanup EXIT; say "cleanup requested" ;;
+*)
+    sed -n '1,32p' "$0"
+    exit 2 ;;
+esac

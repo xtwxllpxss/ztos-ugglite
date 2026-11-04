@@ -74,3 +74,27 @@ Quotes are copied from the working notes, not re-measured:
 
 If any of these need to be restated publicly as a current fact, they should be
 re-measured; here they are attributed, not asserted.
+
+## Provenance of the modem / offline-time material
+
+* `docs/modem.md` — original English text written for this repository from the
+  device work notes. It is not a translation of upstream documentation and copies
+  no upstream prose.
+* `devices/…/overlay/usr/local/libexec/msm-modem-uim-selection` and
+  `msm-modem-wwan-port` — taken from postmarketOS/msm-modem at
+  `5f504e0677f40dec93018d53a9b71aa1931db238` (GPL-3.0-or-later). They keep the
+  upstream SPDX line and the commit they came from in their headers; the only
+  local change is the `operating mode=online` step after USIM selection, which is
+  visible in the file. `LICENSES/GPL-3.0-or-later.txt` ships the licence text.
+* `devices/…/overlay/usr/local/sbin/swclock-offset-{boot,shutdown}` — from
+  postmarketOS/swclock-offset 0.3.0, GPL-3.0-or-later; upstream copyright header
+  retained verbatim.
+* `devices/…/overlay/usr/local/sbin/ugglite-modem*`, the systemd units and
+  `build-environment/build-ugglite-modem.sh` — original work for this device,
+  GPL-3.0-or-later like the rest of the device layer.
+* The build script fetches rmtfs `b30a3eb3…` and qrtr `29e36ae1…` (both
+  BSD-3-Clause) and fails if the resolved commit differs. Their source is not
+  vendored here; the licence of any binary produced from them stays BSD-3-Clause,
+  and no such binary is shipped.
+* The rebuilt `rmtfs` hash quoted in `docs/modem.md` is copied from the delivery
+  log of the accepted build, not recomputed for this repository.

@@ -13,3 +13,9 @@ ethtool
 mesa-utils
 # Graphical WebKitGTK browser.
 epiphany
+
+# Qualcomm modem control and NetworkManager mobile-broadband support.
+modemmanager
+libqmi
+libqrtr-glib
+ppp

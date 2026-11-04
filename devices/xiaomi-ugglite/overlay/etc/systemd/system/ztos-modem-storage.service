@@ -1,0 +1,25 @@
+[Unit]
+Description=Qualcomm modem EFS storage with volatile writes
+ConditionPathExists=/dev/qcom_rmtfs_mem1
+
+[Service]
+Type=simple
+RuntimeDirectory=ugglite-modem-efs
+RuntimeDirectoryMode=0700
+ExecStartPre=/usr/bin/ln -sf /dev/disk/by-partlabel/modemst1 /run/ugglite-modem-efs/modemst1
+ExecStartPre=/usr/bin/ln -sf /dev/disk/by-partlabel/modemst2 /run/ugglite-modem-efs/modemst2
+ExecStartPre=/usr/bin/ln -sf /dev/disk/by-partlabel/fsc /run/ugglite-modem-efs/fsc
+ExecStartPre=/usr/bin/ln -sf /dev/disk/by-partlabel/fsg /run/ugglite-modem-efs/fsg
+ExecStart=/usr/local/libexec/ugglite-rmtfs -r -P -o /run/ugglite-modem-efs
+Restart=no
+TimeoutStopSec=15
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/ugglite-modem-efs
+DevicePolicy=closed
+DeviceAllow=/dev/qcom_rmtfs_mem1 rw
+DeviceAllow=/dev/disk/by-partlabel/modemst1 r
+DeviceAllow=/dev/disk/by-partlabel/modemst2 r
+DeviceAllow=/dev/disk/by-partlabel/fsc r
+DeviceAllow=/dev/disk/by-partlabel/fsg r

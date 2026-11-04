@@ -21,7 +21,9 @@ booted from a host over USB; several core functions are unverified or broken.
 | Wi-Fi | associates and passes traffic; rate/throughput under load not fixed |
 | Audio | stock path plays, with audible hiss while idle; the replacement path was rejected on hardware |
 | RTC write | **unsafe — do not attempt**; root cause not established |
-| Modem, camera, suspend | unverified, no claims |
+| Modem | LTE registration, signal and the UI indicator work; **data/APN, SMS, calls, call audio and GNSS unverified** — details in [docs/modem.md](docs/modem.md) |
+| Offline time | system clock correct without NTP via `swclock-offset`; hardware RTC write still unsafe |
+| Camera, suspend | unverified, no claims |
 
 Details and the exact evidence boundary: [docs/hardware-status.md](docs/hardware-status.md).
 Safety notes before touching the device: [docs/safety.md](docs/safety.md).

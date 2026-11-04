@@ -31,6 +31,13 @@ both double-applies 0001–0003 and the haptic hunk. `SERIES.md` states this fir
 | `devices/xiaomi-ugglite/{device.toml,layer.sh,fixups.sh,overlay,packages.txt}` | already public | unchanged |
 | `patches/ztconflo/000{1,2,3}-*.patch` | `build/` … | build-driver patches already pinned in `ATTRIBUTION.md`; unchanged |
 
+| `devices/xiaomi-ugglite/modem/README.md` | `docs/modem.md` | **new**; rewritten in English for the public docs set, technical content unchanged. The local README keeps session notes and is not copied verbatim |
+| `devices/xiaomi-ugglite/overlay/etc/systemd/system/{ztos-modem,ztos-modem-storage,msm-modem-*,ugglite-modem-status,swclock-offset-*}.{service,timer}` + enabling symlinks | same paths | **new**; the units that produce the verified `registered/home` state, including the `.requires/` and `.wants/` links — without them the overlay does not enable anything |
+| `devices/xiaomi-ugglite/overlay/usr/local/{sbin/ugglite-modem,sbin/ugglite-modem-status,sbin/swclock-offset-boot,sbin/swclock-offset-shutdown,libexec/msm-modem-uim-selection,libexec/msm-modem-wwan-port}` | same paths | **new**; verbatim. `libexec/*` are the postmarketOS GPL-3.0-or-later helpers at the pinned commit, with their SPDX headers intact |
+| `build-environment/build-ugglite-modem.sh` | `build-environment/build-ugglite-modem.sh` | **new**; fetches the pinned rmtfs/qrtr revisions, verifies the checkout, installs only the binary. No host path inside |
+| `research/ugglite-next-plan.md` | `docs/next-plan.md` | **new**; the prioritised work order, rewritten for publication. Not a verbatim copy: internal paths, candidate sha prefixes and the working-diary framing were dropped |
+| `research/ugglite-next-plan.md` (raw), `START-HERE.md`, `research/*` | — | still excluded: device identifiers, boot ids, SSIDs, MACs, host paths and session diary. Only the plan's technical content is published, in `docs/next-plan.md` |
+
 ## Excluded, with the reason (not a judgement on the work)
 
 | Local component | Reason |

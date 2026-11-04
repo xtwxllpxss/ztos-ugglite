@@ -1,0 +1,13 @@
+[Unit]
+Description=Qualcomm MSS modem firmware
+Requires=ztos-modem-storage.service
+After=ztos-modem-storage.service systemd-modules-load.service
+Before=msm-modem-wwan-port.service msm-modem-uim-selection.service ModemManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ugglite-modem --start-managed
+ExecStop=/usr/local/sbin/ugglite-modem --cleanup
+TimeoutStartSec=60
+TimeoutStopSec=45
