@@ -1,7 +1,9 @@
 # Hardware status — Xiaomi Redmi Note 5A (ugglite)
 
 Last updated from the hardware session that booted the ztOS baseline
-`4fed0f289ce6f739b2151326400b22d2aece7e63be2e11bba1d1c2392aad5faf`.
+`4fed0f289ce6f739b2151326400b22d2aece7e63be2e11bba1d1c2392aad5faf`, plus a
+later session that trialled a replacement UI build hot-swapped into the running
+system without a reboot (display section below).
 Everything below is either observed on the phone or explicitly unverified; there
 is no third category. "Works" means observed in that session, not guaranteed to
 survive a rebuild.
@@ -18,8 +20,21 @@ survive a rebuild.
   rollback to the baseline image completed; the device owner confirmed the baseline display works. Binding
   is not a working display and is not reported as one. Earlier notes that called
   the panel "usable for a text/graphical session" are superseded by this run.
-  Separately, **UI brightness control fails with `EACCES`**; the permission fix is
-  not a brightness fix and was not shipped as one.
+  The baseline display was later confirmed working by the device owner, and no
+  display candidate has passed visible acceptance since.
+- **Brightness control from the UI — not working (regression).** In the later
+  hot-trial session a replacement UI/compositor build was installed into the
+  running system (no reboot) and exercised. The owner reports that dragging the
+  screen-brightness slider produces stutter/jitter and **the brightness does not
+  change**. The compositor path does reach logind and the kernel backlight and
+  writes the expected values (50 % → 128, 65 % → 166, 77 % → 196 raw), so the
+  failure is downstream of the write or in the compositor's own slider handling,
+  not a permission error. An earlier `EACCES` on the same control was a separate
+  issue; a permission fix was never a brightness fix and was not shipped as one.
+  A sysfs write that returns success is **not** evidence that the slider works.
+  A rollback of that single binary to the previous build was in progress when
+  this was written and had not been re-verified; nothing here should be read as
+  "fixed" or "rolled back cleanly".
 - **Audio (stock path).** Playback reaches the speaker sink and produces sound,
   with audible hiss while idle. This is the state today.
 - **Wi-Fi.** The wcn36xx path associates and passes traffic in the tested

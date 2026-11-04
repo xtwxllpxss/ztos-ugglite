@@ -12,8 +12,8 @@ not a product, not an installer and not an officially supported ztOS device.**
 Nothing here is endorsed by the ztOS or postmarketOS projects. Do not expect a
 one-command install: the verified state is a hand-built root filesystem booted
 over USB from a host, and several core functions are unverified or broken — the
-latest display candidate is one of them (see
-[status](docs/hardware-status.md)).
+most recent experimental UI/display builds are among them, and the UI brightness
+slider does not work (see [status](docs/hardware-status.md)).
 
 ## What actually works, and what does not
 
@@ -22,7 +22,8 @@ Short version, as of the last hardware session:
 | Area | State |
 |---|---|
 | Kernel / RAM boot to userspace | works (ztOS baseline `4fed0f28…` booted via lk2nd) |
-| Display | baseline image confirmed working by the device owner after rollback; the replacement panel module produced a black screen and is rejected; UI brightness control remains unresolved (`EACCES`) |
+| Display | baseline display confirmed working by the device owner; replacement builds did not pass — one produced a black screen, a later experimental UI build regressed the brightness slider; rollback to the previous UI build was still in progress when this was written |
+| Brightness control | **not working from the UI.** The compositor path reaches the kernel and writes backlight values (50/65/77 % → raw 128/166/196), yet the visible brightness does not change and the slider jitters. A successful sysfs write is not a working slider and is not reported as a fix |
 | Audio | stock path plays with idle hiss; a replacement (C2) was rejected on hardware |
 | Wi-Fi | works with limitations (throughput/rate behaviour not fixed) |
 | RTC write | **unsafe, do not attempt** — cause of the crash is not established |
