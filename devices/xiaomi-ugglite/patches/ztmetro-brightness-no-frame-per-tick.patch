@@ -1,0 +1,185 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-FileCopyrightText: the ztOS authors (upstream file below)
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch target: ztmetro/ztmetro.c at ztOS 94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf.
+The upstream file declares GPL-2.0-or-later; this derivative is
+distributed under GPL-3.0-or-later by exercising the "or later" option.
+Hunk bytes are unchanged; copyright in the upstream code remains with
+the ztOS authors.
+
+--- a/ztmetro/ztmetro.c
++++ b/ztmetro/ztmetro.c
+@@ -2898,8 +2898,13 @@
+ 	}
+ }
+ 
+-/* 1..100 %: a hand, or anything else that is not the light sensor. */
+-static void backlight_set(int percent) {
++/* 1..100 %: a hand, or anything else that is not the light sensor.
++ * `redraw` says whether anything on this screen shows the level: a drag of the
++ * settings slider does not (it draws its own), and a whole frame for each of
++ * its ticks is the frame the compositor needs for the next one. */
++static void backlight_set(int percent, bool redraw) {
++	static int published = -1;
++	static bool ro_checked, ro;
+ 	if (!backlight_usable()) {
+ 		return;
+ 	}
+@@ -2909,12 +2914,40 @@
+ 	if (bl.mode == BL_TABLE) {
+ 		ramp_goal(percent, 0.0, false);
+ 		return;
++	}
++	/* Is the panel's level ours to set at all? Asked once. Without write
++	 * access brightnessctl fails with EACCES on every tick, silently (its
++	 * stderr is /dev/null), so a fork and an exec a tick buy nothing. */
++	if (bl.mode == BL_CTL && !ro_checked) {
++		ro_checked = true;
++		ro = access(bl.path, W_OK) != 0;
++		if (ro) {
++			/* A file left by an earlier shell names a level this one cannot
++			 * set: drop it, so a reader sees /sys (the level the panel
++			 * really holds) instead of a stale number. */
++			const char *rt = getenv("XDG_RUNTIME_DIR");
++			if (rt) {
++				char stale[256];
++				snprintf(stale, sizeof(stale), "%s/ztmetro.brightness", rt);
++				if (unlink(stale) != 0) {}	/* already gone is the wanted state */
++			}
++			wlr_log(WLR_ERROR, "backlight: %s is not writable by the shell: "
++				"the level is not set and the picture is left alone",
++				bl.path);
++		}
+ 	}
+ 	/* Publish the effective brightness: on the S9 the panel sits at a band
+ 	 * level, so a reader of /sys sees 20/40/70/100, not what is wanted. The
+-	 * settings slider follows this file instead, so it does not snap to a band. */
++	 * settings slider follows this file instead, so it does not snap to a band.
++	 * Written when it moves, not on every tick of a drag -- and only while the
++	 * level is in effect: on BL_CTL without write access it is not (`ro` above),
++	 * and a file naming a level the panel never took makes every reader lie.
++	 * ztsettings' brightness_now() then falls back to /sys, which is the truth.
++	 * `published` is left alone there, so the first level that can be applied
++	 * is still published. */
++	bool in_effect = !(bl.mode == BL_CTL && ro);
+ 	const char *runtime = getenv("XDG_RUNTIME_DIR");
+-	if (runtime) {
++	if (runtime && in_effect && percent != published) {
+ 		char p[256], tmp[260], text[8];
+ 		snprintf(p, sizeof(p), "%s/ztmetro.brightness", runtime);
+ 		snprintf(tmp, sizeof(tmp), "%s.new", p);
+@@ -2923,7 +2956,11 @@
+ 		if (fd >= 0) {
+ 			if (write(fd, text, n) == n) {
+ 				close(fd);
+-				if (rename(tmp, p) != 0) { unlink(tmp); }
++				if (rename(tmp, p) == 0) {
++					published = percent;
++				} else {
++					unlink(tmp);
++				}
+ 			} else {
+ 				close(fd);
+ 				unlink(tmp);
+@@ -2938,13 +2975,15 @@
+ 			wl_event_source_timer_update(bl.settle, BL_SETTLE_MS);
+ 		}
+ 		/* same band: the darkening alone, no hardware write at all */
+-	} else {	/* BL_CTL */
++	} else if (!ro) {	/* BL_CTL */
+ 		pthread_mutex_lock(&bl.lock);
+ 		bl.want = percent;
+ 		pthread_cond_signal(&bl.wake);
+ 		pthread_mutex_unlock(&bl.lock);
+ 	}
+-	damage(bl.server);
++	if (redraw) {
++		damage(bl.server);
++	}
+ }
+ 
+ /* How much of the picture to take away for the brightness wanted: all of it
+@@ -3132,7 +3171,7 @@
+ 		/* the light sensor has it: a saved manual level must not jump in */
+ 		server->shade_brightness = (int)lround(ramp.goal);
+ 	} else {
+-		backlight_set(server->shade_brightness);
++		backlight_set(server->shade_brightness, true);
+ 	}
+ }
+ 
+@@ -8018,7 +8057,7 @@
+ 		}
+ 		config_keep("brightness", server->shade_brightness);	/* remembered */
+ 		backlight_manual();	/* a hand on it: the light sensor steps back */
+-		backlight_set(server->shade_brightness);
++		backlight_set(server->shade_brightness, true);
+ 		draw_shade(server);
+ 		damage(server);
+ 		break;
+@@ -10404,7 +10443,7 @@
+ 		if (bl.mode == BL_TABLE && ramp.goal > 0.0) {
+ 			ramp_snap(ramp.goal);
+ 		} else {
+-			backlight_set(server->shade_brightness);
++			backlight_set(server->shade_brightness, true);
+ 		}
+ 	}
+ 	wlr_log(WLR_INFO, "screen %s", on ? "on" : "off");
+@@ -12317,32 +12356,40 @@
+ 	} else if (sscanf(line, "brightness-fine %d", &id) == 1) {
+ 		/* the settings slider under a finger: tenths of a percent */
+ 		server->shade_brightness = id < 20 ? 2 : id > 1000 ? 100 : (id + 5) / 10;
++		bool quiet = bl.mode == BL_CTL && !server->shade_open && server->shade_h <= 0;
+ 		if (bl.mode == BL_TABLE) {
+ 			ramp_goal(id / 10.0, 0.0, false);
+ 		} else {
+-			backlight_set(server->shade_brightness);
++			backlight_set(server->shade_brightness, false);
+ 		}
+-		if (bl.mode != BL_TABLE || server->shade_open || server->shade_h > 0) {
++		/* BL_CTL: the panel takes the level and nothing here draws it (the
++		 * drag draws its own percentage), so a frame per tick is only the
++		 * frame the compositor needs for the next one. Elsewhere the
++		 * picture itself changes (darkening, bands) or the shade shows
++		 * the level, and that has to be drawn. */
++		if (!quiet) {
+ 			damage(server);
+ 		}
+ 	} else if (sscanf(line, "brightness-auto %d", &id) == 1) {
+ 		/* the light sensor's goal, tenths of a percent: a slow glide here */
+ 		server->shade_brightness = id < 20 ? 2 : id > 1000 ? 100 : (id + 5) / 10;
++		bool quiet = bl.mode == BL_CTL && !server->shade_open && server->shade_h <= 0;
+ 		if (bl.mode == BL_TABLE) {
+ 			ramp_goal(id / 10.0, BL_AUTO_SPEED, true);
+ 		} else {
+-			backlight_set(server->shade_brightness);
++			backlight_set(server->shade_brightness, false);
+ 		}
+-		if (bl.mode != BL_TABLE || server->shade_open || server->shade_h > 0) {
++		if (!quiet) {
+ 			damage(server);
+ 		}
+ 	} else if (sscanf(line, "brightness %d", &id) == 1) {
+ 		/* from an ambient light program or settings: 1..100 */
+ 		server->shade_brightness = id < 1 ? 1 : id > 100 ? 100 : id;
+-		backlight_set(server->shade_brightness);
++		bool quiet = bl.mode == BL_CTL && !server->shade_open && server->shade_h <= 0;
++		backlight_set(server->shade_brightness, false);
+ 		/* the panel does the dimming itself: only the shade's slider, if
+ 		 * it is showing, has anything to draw */
+-		if (bl.mode != BL_TABLE || server->shade_open || server->shade_h > 0) {
++		if (!quiet) {
+ 			damage(server);
+ 		}
+ 	} else if (sscanf(line, "tone %d", &id) == 1) {
+@@ -14481,7 +14528,7 @@
+ 	if (bl.mode == BL_TABLE) {
+ 		ramp_snap(server.shade_brightness);
+ 	} else {
+-		backlight_set(server.shade_brightness);
++		backlight_set(server.shade_brightness, true);
+ 	}
+ 	server.renderer = wlr_renderer_autocreate(server.backend);
+ 	if (!server.renderer) {

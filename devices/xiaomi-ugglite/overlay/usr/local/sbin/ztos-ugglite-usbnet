@@ -1,0 +1,90 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Read-only diagnostics for the ztOS USB gadget on this phone.
+#
+# The GSI builds one composite gadget, /sys/kernel/config/usb_gadget/zboot: an
+# NCM network and an ACM console (zboot-usb-gadget.service runs this layer's
+# usr/local/sbin/zboot-usb-gadget, which replaces the GSI's S9-branded copy but
+# builds the same gadget). Its addresses are the upstream ones: the phone is
+# 172.16.42.1/24 and the host is handed 172.16.42.2, with the locally
+# administered 02:5a:42:00:00:01/02 addresses. This script only reads that
+# state: it creates nothing, changes no address or MAC, prints no identifier of
+# the device or of the host, and never touches ADB.
+#
+#   ztos-ugglite-usbnet
+#
+# Exit: 0 the gadget and its network are up, 1 the gadget is not configured,
+# 2 there is no UDC at all (the controller or its modules are missing).
+set -u
+
+g=/sys/kernel/config/usb_gadget/zboot
+rc=0
+
+say() { printf '%s\n' "$*"; }
+
+say "UDC:"
+if [ -d /sys/class/udc ] && [ -n "$(ls -A /sys/class/udc 2>/dev/null)" ]; then
+	ls -A /sys/class/udc | sed 's/^/  /'
+else
+	# chipidea is built in (=y) in the pinned kernel, so there is no module to
+	# load for it: a missing UDC is a DT/phy problem, not a missing chipidea.ko.
+	say "  none: no gadget controller registered (chipidea is built in, CONFIG_USB_CHIPIDEA=y)"
+	say "  check dmesg for ci_hdrc/phy probe errors; modules needed are only:"
+	say "  lsmod | grep -E 'libcomposite|usb_f_ncm|usb_f_acm|u_ether'"
+	exit 2
+fi
+
+say "gadget $g:"
+if [ ! -d "$g" ]; then
+	say "  missing: zboot-usb-gadget has not run (systemctl status zboot-usb-gadget)"
+	exit 1
+fi
+
+say "  functions:"
+if [ -d "$g/functions" ] && [ -n "$(ls -A "$g/functions" 2>/dev/null)" ]; then
+	ls -A "$g/functions" | sed 's/^/    /'
+else
+	say "    none"
+	rc=1
+fi
+
+say "  configs:"
+if [ -d "$g/configs" ] && [ -n "$(ls -A "$g/configs" 2>/dev/null)" ]; then
+	ls -A "$g/configs" | sed 's/^/    /'
+else
+	say "    none"
+	rc=1
+fi
+
+bound=$(cat "$g/UDC" 2>/dev/null)
+if [ -n "$bound" ]; then
+	say "  bound to: $bound"
+else
+	say "  not bound to a UDC"
+	rc=1
+fi
+
+say "network:"
+if [ ! -d /sys/class/net/usb0 ]; then
+	say "  no usb0 interface"
+	exit 1
+fi
+
+say "  state: $(cat /sys/class/net/usb0/operstate 2>/dev/null || echo unknown)"
+have_phone_ip=no
+if command -v ip >/dev/null 2>&1; then
+	ip -4 -o addr show dev usb0 2>/dev/null | sed 's/^/  /'
+	ip -4 -o addr show dev usb0 2>/dev/null | grep -q ' 172\.16\.42\.1/' && have_phone_ip=yes
+	if [ "$have_phone_ip" = no ]; then
+		say "  no 172.16.42.1/24 on usb0 (the GSI sets it; see zboot-usb-gadget)"
+		rc=1
+	fi
+else
+	say "  ip(8) not found"
+	rc=1
+fi
+
+say "host side: give the host interface 172.16.42.2/24 on the same link, then reach"
+say "  172.16.42.1 (the phone). The ACM console is on the phone's /dev/ttyGS0."
+exit $rc

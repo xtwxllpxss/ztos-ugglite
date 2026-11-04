@@ -1,0 +1,118 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-FileCopyrightText: the ztOS authors (upstream file below)
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch target: ztmetro/ztmetro.c at ztOS 94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf.
+The upstream file declares GPL-2.0-or-later; this derivative is
+distributed under GPL-3.0-or-later by exercising the "or later" option.
+Hunk bytes are unchanged; copyright in the upstream code remains with
+the ztOS authors.
+
+--- a/ztmetro/ztmetro.c
++++ b/ztmetro/ztmetro.c
+@@ -406,6 +406,7 @@
+ 	struct wl_list link;
+ 	struct zt_server *server;
+ 	struct wlr_keyboard *wlr_keyboard;
++	bool nav_keys;		/* the phone's own touch keys (Goodix) */
+ 	struct wl_listener modifiers, key, destroy;
+ };
+ 
+@@ -12750,12 +12751,48 @@
+ }
+ 
+ /* ---- keyboard (the phone's hardware keys, or a real one) ------------------ */
++
++/* The phone's own touch keys are one evdev device: the Goodix touchscreen,
++ * which the driver also gives generic F1..F6 and LEFT META. Only that device
++ * is read as navigation; a real keyboard's F1, F2 or Super keep their meaning,
++ * and nothing else on the phone is translated. */
++static bool nav_key_source(const char *name) {
++	return name && strcmp(name, "Goodix Capacitive TouchScreen") == 0;
++}
+ 
++/* Its three keys are, from the left, recents, Start and back. The driver's
++ * own codes are generic placeholders (research/ugglite-touchkeys-capture.md),
++ * so they are translated to the codes ztmetro already reads as nav. */
++static uint32_t nav_key_code(bool nav_keys, uint32_t keycode) {
++	if (!nav_keys) {
++		return keycode;
++	}
++	switch (keycode) {
++	case KEY_LEFTMETA:
++		return KEY_APPSELECT;
++	case KEY_F1:
++		return KEY_HOMEPAGE;
++	case KEY_F2:
++		return KEY_BACK;
++	}
++	return keycode;
++}
++
+ static void keyboard_handle_modifiers(struct wl_listener *listener, void *data) {
+ 	struct zt_keyboard *keyboard = wl_container_of(listener, keyboard, modifiers);
+-	wlr_seat_set_keyboard(keyboard->server->seat, keyboard->wlr_keyboard);
+-	wlr_seat_keyboard_notify_modifiers(keyboard->server->seat,
+-		&keyboard->wlr_keyboard->modifiers);
++	struct wlr_keyboard *wlr_keyboard = keyboard->wlr_keyboard;
++	struct wlr_keyboard_modifiers mods = wlr_keyboard->modifiers;
++	if (keyboard->nav_keys) {
++		/* The left touch key is LEFT META by the driver's generic table and
++		 * is consumed above as recents, so Super is not a meaning it has
++		 * here: the seat and the apps must not see it, or a Super binding
++		 * or a launcher answers a nav press. Cleared in the keyboard's own
++		 * state as well, which is what a focus change sends. */
++		mods.depressed &= ~WLR_MODIFIER_LOGO;
++		wlr_keyboard->modifiers.depressed &= ~WLR_MODIFIER_LOGO;
++	}
++	wlr_seat_set_keyboard(keyboard->server->seat, wlr_keyboard);
++	wlr_seat_keyboard_notify_modifiers(keyboard->server->seat, &mods);
+ }
+ 
+ /* The nav button a phone's own key stands for: Samsung's are, from the left,
+@@ -12852,7 +12889,8 @@
+ 			return;
+ 		}
+ 	}
+-	int nav = hwkey_nav(event->keycode);
++	uint32_t navcode = nav_key_code(keyboard->nav_keys, event->keycode);
++	int nav = hwkey_nav(navcode);
+ 	if (nav == NAV_START && !server->screen_on &&
+ 	    event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
+ 		/* home wakes the screen, as the power key does */
+@@ -12866,9 +12904,16 @@
+ 	}
+ 	activity(server);
+ 	if (nav >= 0) {
+-		wlr_log(WLR_INFO, "nav: key %u %s", event->keycode,
++		wlr_log(WLR_INFO, "nav: key %u %s", navcode,
+ 			event->state == WL_KEYBOARD_KEY_STATE_PRESSED ? "down" : "up");
+ 		if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
++			if (server->hwkey_held == nav) {
++				/* the keyboard's own repeat of the key already held
++				 * is not a new press: it must not restart the 450 ms
++				 * clock, or a hold would fire long again and then a
++				 * short on release */
++				return;
++			}
+ 			/* the two touch keys answer every touch, locked or not: home
+ 			 * is a button that clicks by itself */
+ 			if (nav != NAV_START) {
+@@ -12972,6 +13017,7 @@
+ 		struct zt_keyboard *keyboard = calloc(1, sizeof(*keyboard));
+ 		keyboard->server = server;
+ 		keyboard->wlr_keyboard = wlr_keyboard;
++		keyboard->nav_keys = nav_key_source(device->name);
+ 		set_default_keymap(wlr_keyboard);
+ 		wlr_keyboard_set_repeat_info(wlr_keyboard, 25, 600);
+ 		keyboard->modifiers.notify = keyboard_handle_modifiers;
+@@ -12981,7 +13027,8 @@
+ 		keyboard->destroy.notify = keyboard_handle_destroy;
+ 		wl_signal_add(&device->events.destroy, &keyboard->destroy);
+ 		wl_list_insert(&server->keyboards, &keyboard->link);
+-		wlr_log(WLR_INFO, "keys: %s", device->name);
++		wlr_log(WLR_INFO, "keys: %s%s", device->name,
++			keyboard->nav_keys ? " (its keys are the nav buttons)" : "");
+ 	}
+ }
+ 

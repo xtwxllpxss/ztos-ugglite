@@ -1,0 +1,44 @@
+# Build outputs and binaries are never published from this repository.
+build/
+out/
+*.img
+*.img.gz
+*.img.zst
+*.bin
+*.apk
+*.tar
+*.tar.gz
+*.tar.zst
+*.ko
+*.ko.zst
+*.deb
+*.iso
+*.cpio
+*.cpio.gz
+
+# Local environment, credentials and private configuration.
+.env
+.env.*
+*.key
+*.pem
+*.p12
+id_rsa*
+known_hosts
+ssh_config
+authorized_keys
+
+# Hardware captures and session logs may contain identifiers.
+*.log
+*.pcap
+*.pcapng
+traces/
+captures/
+
+# Editor and OS noise.
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+__pycache__/
+*.pyc

@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# ztOS device capabilities: xiaomi-ugglite (Xiaomi Redmi Note 5A, MSM8917)
+#
+# This file is part of the ugglite device-profile overlay. `layer.sh apply <root>`
+# copies overlay/ verbatim into an existing root; no init script in this
+# repository writes it. This repository implements no backup of a replaced file.
+#
+# Why it exists: the CSF list (/etc/ztoscoresensorframework/components) no longer
+# names the Samsung Galaxy S9 hardware pieces, because their drivers and daemons
+# do not exist for this phone. Silently deleting those rows would make the system
+# look complete. This file says, in one place and in plain text, what is NOT
+# adapted -- so no reader, UI or report can present it as working.
+#
+# Format: state <item> -- <statement>. "unadapted" means: no driver, no service
+# and no functional test in this port. It does NOT mean "broken hardware": the
+# components may exist physically and simply have no software support here.
+
+Profile: xiaomi-ugglite
+Kernel family: MSM8917 (msm89x7), mainline 7.1.3-msm89x7
+Adaptation scope: /etc/ztos/device, /etc/ztoscoresensorframework/components,
+                  /etc/systemd/system masks and the sensor-hub opt-out drop-in.
+
+unadapted led          -- no notification-light driver is packaged or loaded; /sys/class/leds has no ztOS-controlled entry. The S9 zrn_led module does not exist for this PMIC and is not looked for.
+unadapted haptics      -- no vibration driver is packaged or loaded; zrn_haptic is S9-only and is not looked for. Whether the motor is gpio/pwm driven on this board was not established.
+unadapted modem        -- the modem is Qualcomm (MSM8917), while the shipped stack (ztoscorenetworking*, Samsung cbd) speaks the Samsung CBD protocol. No Qualcomm backend exists in this tree, so both units are masked; calls, SMS and mobile data are unavailable.
+unadapted sensors      -- no sensor hub driver, no sensord counterpart: the S9/Broadcom BCM4773 hub and ztoscsf-sensord are absent and masked. Light, proximity, accelerometer and compass readings are not available to the UI.
+unadapted audio        -- no audio routing/DSP support: ztoscirrusaudio (S9 Cirrus/Wolfson ZrnAbox) has no equivalent here, and card0 is not claimed to be functional. Sound output/input is untested and unsupported.
+unadapted battery      -- no fuel gauge is registered (no power_supply entries were observed); battery percentage and charge state are not available. Nothing here asserts that the BMS is absent from the hardware -- only that this port has no driver for it.
+unadapted charger      -- no charger driver/daemon is adapted; the S9 max77705 path and zrn-charge.service do not apply. Charging status is not reported by ztOS.
+
+# Deliberately NOT masked, and why (checked against the packaged image):
+#   ztos-touchkeyd.service  carries ConditionFirmware=device-tree-compatible(samsung,j5),
+#                           so it is skipped by systemd on this device; masking it
+#                           would hide a condition that already works.
+#   NetworkManager, BlueZ/bluetooth, PipeWire/WirePlumber, greetd, sshd,
+#   ztos-iald, ztos-memory-policy, kernel thermal and journald are generic
+#   platform services, not Samsung hardware support, and are left alone.
+#
+# A row above is a statement about this port, not a hardware verdict. Re-check it
+# before claiming any of these devices works.

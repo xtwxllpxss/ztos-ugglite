@@ -1,0 +1,44 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-FileCopyrightText: the ztOS authors (upstream file below)
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch target: ztmetro/settings/ztsettings.c at ztOS 94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf.
+The upstream file declares GPL-2.0-or-later; this derivative is
+distributed under GPL-3.0-or-later by exercising the "or later" option.
+Hunk bytes are unchanged; copyright in the upstream code remains with
+the ztOS authors.
+
+diff --git a/ztmetro/settings/ztsettings.c b/ztmetro/settings/ztsettings.c
+index 05f79da..e417bef 100644
+--- a/ztmetro/settings/ztsettings.c
++++ b/ztmetro/settings/ztsettings.c
+@@ -602,6 +602,7 @@ static void config_save(void) {
+ 	zmc.accent = ACCENTS[app.accent].color;
+ 
+ 	char path[512], tmp[512], line[256];
++	config_dir_make();
+ 	config_path(path, sizeof(path));
+ 	snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+ 	FILE *in = fopen(path, "r"), *out = fopen(tmp, "w");
+@@ -2487,9 +2488,21 @@ static void vibe_preview_play(bool with_sound) {
+ 	}
+ }
+ 
++/* Nothing guarantees ~/.config/ztmetro exists before the first save: create
++   it, otherwise fopen() fails with ENOENT and every save is dropped silently. */
++static void config_dir_make(void) {
++	const char *home = getenv("HOME") ?: "";
++	char dir[512];
++	snprintf(dir, sizeof(dir), "%s/.config", home);
++	if (mkdir(dir, 0700) != 0 && errno != EEXIST) return;
++	snprintf(dir, sizeof(dir), "%s/.config/ztmetro", home);
++	if (mkdir(dir, 0700) != 0 && errno != EEXIST) return;
++}
++
+ static void ringtone_choose(int index) {
+ 	if (index < 0 || index >= n_ringtones) return;
+ 	char path[512], tmp[520];
++	config_dir_make();
+ 	ringtone_path(path, sizeof(path));
+ 	snprintf(tmp, sizeof(tmp), "%s.new", path);
+ 	FILE *f = fopen(tmp, "w");

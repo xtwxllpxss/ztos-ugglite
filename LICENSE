@@ -1,0 +1,24 @@
+ztos-ugglite — device adaptation for the Xiaomi Redmi Note 5A (ugglite)
+
+Copyright (C) 2026 the ztos-ugglite contributors
+
+This repository is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This repository is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+The full licence text is in LICENSES/GPL-3.0-or-later.txt.
+
+SCOPE — this notice covers original material only: the device layer files,
+documentation and README in this repository. It does NOT relicense third-party
+code. The patches under devices/xiaomi-ugglite/patches/ are derivative works of ztOS
+source files that declare `GPL-2.0-or-later`; they are distributed under
+GPL-3.0-or-later by exercising that "or any later version" option, and upstream
+copyright remains with the ztOS authors. This file does not claim that the
+upstream grant is GPL-3.0. No kernel source, firmware or upstream code is
+included. See NOTICE.md for the per-area licence table and ATTRIBUTION.md for the
+upstream revisions referenced.

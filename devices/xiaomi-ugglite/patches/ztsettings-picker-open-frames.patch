@@ -1,0 +1,37 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-FileCopyrightText: the ztOS authors (upstream file below)
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch target: ztmetro/core/zrnmetrocore.c at ztOS 94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf.
+The upstream file declares GPL-2.0-or-later; this derivative is
+distributed under GPL-3.0-or-later by exercising the "or later" option.
+Hunk bytes are unchanged; copyright in the upstream code remains with
+the ztOS authors.
+
+diff --git a/ztmetro/core/zrnmetrocore.c b/ztmetro/core/zrnmetrocore.c
+index 9cdb2d5..f959aad 100644
+--- a/ztmetro/core/zrnmetrocore.c
++++ b/ztmetro/core/zrnmetrocore.c
+@@ -4474,7 +4474,21 @@ double zmc_picker(cairo_t *cr, double y, const char *caption, const char *const
+ 	if (!zmc.configured) {
+ 		p = open ? 1 : 0;	/* drawn into a file: no motion, the end state */
+ 	}
+-	if (p > 0.001 && p < 0.999) {
++	/* A list taller than the screen cannot swell in place: every frame of it
++	 * redraws a page cache that long (52 ringtones: 2 s of drawing here), and
++	 * its options only take a tap once the swell has ended. Open and close it
++	 * at once instead: one redraw, and the list is usable straight away. */
++	if (row * count > zmc.height - 120) {
++		p = open ? 1 : 0;
++		if (!open) moving = 0;
++	}
++	/* The frame that opens a picker draws p = 0, and that one asked for no
++	 * next frame: the swell only carried on while the press effect lent it
++	 * frames (ZMC_TILT_OUT_MS), and one page redraw can cost longer than that
++	 * (measured 1.15 ms a pixel row on ugglite), so the picker stayed shut and
++	 * its options untappable until the next touch. Anything still moving asks
++	 * for its own frames. */
++	if (open ? p < 0.999 : (moving == action && p > 0.001)) {
+ 		zmc.picker_until = now + 100;
+ 	}
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);

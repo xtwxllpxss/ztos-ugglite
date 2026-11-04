@@ -1,0 +1,50 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The GSI's composite gadget, made phone-agnostic: an NCM network (the phone is
+# 172.16.42.1/24 and hands the host 172.16.42.2) and an ACM console on ttyGS0.
+#
+# This is the layer's replacement for the GSI's rootfs/overlay copy, which
+# hardcodes the Galaxy S9: product "Galaxy S9 Arch Linux ARM" and serialnumber
+# "starlte". ztConflo copies a registry entry's overlay/ over the assembled root
+# in step 5 (build_gsi), so this file wins at the same path and everything else
+# about the gadget stays the same: the same configfs paths, the same idVendor
+# 0x1d6b (Linux Foundation) / idProduct 0x0104, the same NCM MAC pair the GSI's
+# 10-zboot-usb.network unit matches on, the same usb0 setup.
+#
+# No unique identifier is written: there is no serialnumber at all (USB does not
+# require one, and a per-device value would be an identifier this layer must not
+# invent), and the two MACs below are fixed, locally administered addresses that
+# postmarketOS and the GSI already use.
+#
+# The UDC is auto-detected, never hardcoded: the S9's "10c00000.dwc3" does not
+# exist here (CONFIG_USB_DWC3 is not set). ugglite is chipidea
+# (CONFIG_USB_CHIPIDEA=y, CONFIG_USB_CHIPIDEA_MSM=y), but the name it registers
+# has not been read on this phone, so the script takes the first controller the
+# kernel offered and fails closed (exit 1) when there is none.
+set -eu
+
+g=/sys/kernel/config/usb_gadget/zboot
+[ -d "$g" ] && exit 0
+
+udc=$(ls /sys/class/udc 2>/dev/null | head -n1 || true)
+[ -n "$udc" ] || {
+	echo "zboot-usb-gadget: no UDC in /sys/class/udc: no gadget controller registered." >&2
+	echo "  chipidea is built in (CONFIG_USB_CHIPIDEA=y) and registers ci_hdrc; check dmesg." >&2
+	exit 1
+}
+
+mkdir -p "$g/strings/0x409" "$g/configs/c.1/strings/0x409" \
+	"$g/functions/ncm.usb0" "$g/functions/acm.GS0"
+echo 0x1d6b > "$g/idVendor"
+echo 0x0104 > "$g/idProduct"
+echo "ztOS" > "$g/strings/0x409/manufacturer"
+echo "Xiaomi Redmi Note 5A (ugglite)" > "$g/strings/0x409/product"
+echo "ncm+acm" > "$g/configs/c.1/strings/0x409/configuration"
+echo 02:5a:42:00:00:01 > "$g/functions/ncm.usb0/dev_addr"
+echo 02:5a:42:00:00:02 > "$g/functions/ncm.usb0/host_addr"
+ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/"
+ln -s "$g/functions/acm.GS0" "$g/configs/c.1/"
+echo "$udc" > "$g/UDC"
+ip link set usb0 up 2>/dev/null || true
+ip addr add 172.16.42.1/24 dev usb0 2>/dev/null || true

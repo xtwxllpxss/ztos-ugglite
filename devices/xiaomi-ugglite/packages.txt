@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Maintenance tools verified on the ugglite Arch rootfs.
+# Kernel drivers and firmware are supplied separately, matched to kernel release.
+evtest
+strace
+alsa-utils
+htop
+# ztapps requires foot for Terminal=true desktop entries.
+foot
+usbutils
+ethtool
+mesa-utils
+# Graphical WebKitGTK browser.
+epiphany

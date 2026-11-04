@@ -1,0 +1,89 @@
+# SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+# ztOS registry entry: Xiaomi Redmi Note 5A (ugglite).
+# status = "untested": the registry entry itself was never exercised by the ztOS
+# pipeline (no validated ztconflo run), and this snapshot is not an installer.
+# Hardware bring-up did boot a hand-built baseline root on this phone; facts
+# below come from the pinned trees in upstream-lock.json plus that session, not
+# from a published image build. See docs/hardware-status.md.
+#
+# The entry is deliberately incomplete in one place: [boot].rootfs_target is
+# NOT set, because the carrier (microSD / eMMC / keep Android) is an open user
+# decision. ztconflo requires that key, so this entry fails validation until
+# scripts/ztos-dryrun.py stages it with an explicit --rootfs-target.
+[device]
+codename = "xiaomi-ugglite"
+name = "Xiaomi Redmi Note 5A"
+arch = "aarch64"
+status = "untested"
+origin = "pmos"
+
+[source.pmos]
+# The pmaports revision actually checkout-ed in upstream/pmaports (see lock).
+pmaports_commit = "39fe8995ea485a798ac8f1eff091b3962352e791"
+# ugglite is not its own pmOS device package: it is covered by the generic
+# package for MSM8917/MSM8937 boards, which also ships its panel modules.
+device_pkg = "device-qcom-msm89x7"
+kernel_pkg = "linux-postmarketos-qcom-msm89x7"
+firmware_pkgs = ["firmware-qcom-msm89x7"]
+category = "testing"
+
+[kernel]
+mainline = true
+version = "7.1.3"
+soc = "msm8917"
+gpu_driver = "freedreno"
+
+[boot]
+flash_method = "fastboot"
+# Exact DTB only: every name here, in every base dir, must resolve to exactly
+# one file in the kernel package (patch 0001 stops the build otherwise).
+# The name is declared by lk2nd's dts (lk2nd,dtb-files) and matched by the pmOS
+# deviceinfo glob "qcom/msm8917-*"; the file itself is confirmed by the prebuilt
+# kernel apk listing in upstream-lock.json (apk signature not verified yet), not
+# by a build on this host.
+dtb = "qcom/msm8917-xiaomi-ugglite"
+# lk2nd-msm8952 carries ugglite in Documentation/devices.md; ztConflo's
+# default only picks lk2nd for Samsung, so it is stated here. lk2nd is a
+# subpackage: it is built through its parent package lk2nd.
+lk2nd = "lk2nd-msm8952"
+# No flasher for a non-Samsung phone with lk2nd exists yet: ztConflo's lk2nd
+# path is Samsung's Download mode + heimdall/TWRP, so a real build of this entry
+# stops before running anything (patch 0003) and the dry run says the same.
+# Flashing this phone needs a procedure written and tried on hardware first.
+
+[userspace]
+daemons = ["rmtfs", "pd-mapper", "tqftpserv"]
+
+# Overrides for the manifest ial.manifest() generates. They replace the
+# generic defaults key by key (dict.update), so a default the GSI cannot read
+# must be cleared explicitly: "auto" is a literal path/bus name to the generic
+# backend, not a wildcard (ial/ztos_ial/backends/generic.py: Display1 uses
+# config.get('node') and Haptics1 checks the name's truthiness), hence "".
+[ial.Display1]
+# "" = no node: the generic backend then takes the first /sys/class/backlight,
+# whichever panel driver lk2nd selected bound. Nothing here claims a node that
+# has not been read on this phone.
+node = ""
+curve = "linear"
+
+[ial.Haptics1]
+# "" = autodetect: the generic backend takes the first evdev device with rumble
+# force feedback. No "pmic_vib"/S9 device name is copied.
+device = ""
+
+[android]
+# A kernel fact, not a choice: the pinned config has ANDROID_BINDER_IPC=y but
+# "# CONFIG_ANDROID_BINDERFS is not set", and the GSI supports binderfs only.
+# Without this, the generated manifest would say "binderfs" (the default for an
+# entry that says nothing) and the GSI would wait for a filesystem the kernel
+# cannot mount.
+binder = "none"
+gralloc = "gbm"
+
+# Left empty on purpose: [verified] describes the registry entry, which was not
+# validated by ztOS. The baseline hardware boot is recorded in
+# docs/hardware-status.md, not here.
+[verified]
+date = ""
+by = ""

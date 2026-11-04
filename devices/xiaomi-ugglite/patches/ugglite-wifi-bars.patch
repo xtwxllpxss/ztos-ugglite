@@ -1,0 +1,386 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-FileCopyrightText: the ztOS authors (upstream file below)
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch target: ztmetro/ztmetro.c at ztOS 94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf.
+The upstream file declares GPL-2.0-or-later; this derivative is
+distributed under GPL-3.0-or-later by exercising the "or later" option.
+Hunk bytes are unchanged; copyright in the upstream code remains with
+the ztOS authors.
+
+--- a/ztmetro/ztmetro.c
++++ b/ztmetro/ztmetro.c
+@@ -40,6 +40,7 @@
+ #include <fcntl.h>
+ #include <glob.h>
+ #include <pthread.h>
++#include <poll.h>
+ #include <stdatomic.h>
+ #include <sys/eventfd.h>
+ #include <sys/inotify.h>
+@@ -5168,8 +5169,234 @@
+ 		closedir(dir);
+ 	}
+ 	return up;
++}
++
++/* ---- the Wi-Fi strength, asked of NetworkManager off the drawing path ----- */
++
++#define WIFI_ASK_MS	15000	/* how often NetworkManager is asked, while linked */
++#define WIFI_KEEP_MS	45000	/* a reading older than this is not shown at all */
++#define WIFI_NM_TIMEOUT_MS 1200	/* nmcli gets no longer than this to answer */
++
++/* How many of the fan's bands a strength fills: defined below, with the cuts. */
++static int wifi_bars_of_pct(int pct);
++static void draw_status(struct zt_server *server);
++
++/*
++ * One worker thread owns the only call to nmcli; the drawing code reads what it
++ * last published and never waits. Same shape as the backlight's thread: a mutex,
++ * a cond var, and an eventfd that tells the loop a reading has landed. Nothing
++ * here is started unless the fd and the thread both came up.
++ */
++static struct {
++	pthread_mutex_t lock;
++	pthread_cond_t wake;
++	int ask;		/* set by the loop: read once, now */
++	int up;			/* the carrier, as the last tick saw it */
++	int pct;		/* the strength last read, -1 none */
++	uint32_t pct_ms;	/* when it was read (CLOCK_MONOTONIC), 0 never */
++	uint32_t ask_ms;	/* when the worker was last asked (0 never) */
++	int fd;			/* eventfd: a reading has landed */
++	int usable;
++	struct zt_server *server;
++} wf = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, 0, -1, 0, 0, -1, 0, NULL };
++
++/* The strength of the link in use, as NetworkManager has it: the one line of
++ * `nmcli -t -f IN-USE,SIGNAL device wifi list` that starts with '*'. The child
++ * is killed when it has not answered within WIFI_NM_TIMEOUT_MS, so a stuck
++ * nmcli cannot hold the worker; this is the only place a program is run for
++ * the signal, and it is never the loop's thread. */
++static bool wifi_nm_ask(int *pct) {
++	int fds[2];
++	if (pipe2(fds, O_CLOEXEC) != 0) {
++		return false;
++	}
++	pid_t child = fork();
++	if (child == 0) {
++		/* the loop's signalfd owns the signals: none are wanted here */
++		sigset_t none;
++		sigemptyset(&none);
++		sigprocmask(SIG_SETMASK, &none, NULL);
++		int null = open("/dev/null", O_RDWR);
++		if (null >= 0) {
++			dup2(null, 2);
++		}
++		dup2(fds[1], 1);
++		execlp("nmcli", "nmcli", "-t", "-f", "IN-USE,SIGNAL", "device", "wifi", "list", (char *)NULL);
++		_exit(127);
++	}
++	close(fds[1]);
++	if (child < 0) {
++		close(fds[0]);
++		return false;
++	}
++	char buf[1024];
++	size_t len = 0;
++	bool eof = false;
++	struct pollfd pfd = { .fd = fds[0], .events = POLLIN };
++	while (len < sizeof(buf) - 1) {
++		int r = poll(&pfd, 1, WIFI_NM_TIMEOUT_MS);
++		if (r <= 0) {
++			break;
++		}
++		ssize_t n = read(fds[0], buf + len, sizeof(buf) - 1 - len);
++		if (n > 0) {
++			len += (size_t)n;
++		} else if (n == 0) {
++			eof = true;
++			break;
++		} else if (errno != EINTR) {
++			break;
++		}
++	}
++	close(fds[0]);
++	if (!eof) {
++		kill(child, SIGKILL);	/* out of time, or out of buffer */
++		wlr_log(WLR_DEBUG, "wifi: nmcli gave no answer within %d ms", WIFI_NM_TIMEOUT_MS);
++	}
++	buf[len] = 0;
++	bool found = false;
++	for (char *line = buf; line && *line;) {
++		char *nl = strchr(line, '\n');
++		if (nl) {
++			*nl = 0;
++		}
++		if (line[0] == '*' && line[1] == ':') {	/* "*:72" is the one in use */
++			int v = atoi(line + 2);
++			if (v >= 0 && v <= 100) {
++				*pct = v;
++				found = true;
++			}
++			break;
++		}
++		line = nl ? nl + 1 : NULL;
++	}
++	return found;
++}
++
++static void *wifi_thread(void *data) {
++	for (;;) {
++		pthread_mutex_lock(&wf.lock);
++		while (!wf.ask) {
++			pthread_cond_wait(&wf.wake, &wf.lock);
++		}
++		wf.ask = 0;
++		int up = wf.up;
++		pthread_mutex_unlock(&wf.lock);
++		int pct = -1;
++		bool got = up && wifi_nm_ask(&pct);
++		uint32_t at = now_ms();
++		pthread_mutex_lock(&wf.lock);
++		if (got) {
++			wf.pct = pct;
++			wf.pct_ms = at ? at : 1;
++		} else if (!up) {
++			wf.pct = -1;
++			wf.pct_ms = 0;
++		}
++		pthread_mutex_unlock(&wf.lock);
++		uint64_t one = 1;
++		if (wf.fd >= 0 && write(wf.fd, &one, sizeof(one)) < 0) {}
++	}
++	return NULL;
++}
++
++/* Once a second from the loop, while the screen is on: keeps the link state
++ * current and asks for a reading once the last one is WIFI_ASK_MS old. Nothing
++ * is asked while there is no link. */
++static void wifi_tick(void) {
++	bool up = wifi_up();
++	uint32_t now = now_ms();
++	pthread_mutex_lock(&wf.lock);
++	wf.up = up;
++	if (!up) {
++		wf.pct = -1;
++		wf.pct_ms = 0;
++	} else if (wf.usable && !wf.ask && (!wf.ask_ms || now - wf.ask_ms >= WIFI_ASK_MS)) {
++		/* gated on when it was asked, not on when it last answered: a
++		 * failed or killed nmcli must not turn this into one run a second */
++		wf.ask_ms = now ? now : 1;
++		wf.ask = 1;
++		pthread_cond_signal(&wf.wake);
++	}
++	pthread_mutex_unlock(&wf.lock);
+ }
+ 
++/* The last reading, as the drawing code may have it: -1 no link, 0 linked but
++ * no strength worth showing. Never blocks, never starts a program. */
++static int wifi_sig_bars(void) {
++	uint32_t now = now_ms();
++	int bars;
++	pthread_mutex_lock(&wf.lock);
++	if (!wf.up) {
++		bars = -1;
++	} else if (wf.pct >= 0 && wf.pct_ms && now - wf.pct_ms < WIFI_KEEP_MS) {
++		bars = wifi_bars_of_pct(wf.pct);
++	} else {
++		bars = 0;
++	}
++	pthread_mutex_unlock(&wf.lock);
++	return bars;
++}
++
++/* The link is gone now, whatever was last measured (radio off, sleep). */
++static void wifi_forget(void) {
++	pthread_mutex_lock(&wf.lock);
++	wf.up = 0;
++	wf.pct = -1;
++	wf.pct_ms = 0;
++	if (wf.server) {
++		/* the daemon's report is a reading too: radio off clears it, or the
++		 * fan would be drawn from it for up to 40 s */
++		wf.server->wifi_bars = -1;
++		wf.server->wifi_read_ms = 0;
++	}
++	pthread_mutex_unlock(&wf.lock);
++}
++
++static int wifi_read_landed(int fd, uint32_t mask, void *data) {
++	struct zt_server *server = data;
++	uint64_t n;
++	if (read(fd, &n, sizeof(n)) < 0) {}
++	if (server->width > 0) {
++		draw_status(server);
++		damage(server);
++	}
++	return 0;
++}
++
++static void wifi_sig_init(struct zt_server *server) {
++	wf.server = server;
++	wf.fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
++	if (wf.fd < 0) {
++		wlr_log(WLR_ERROR, "wifi: no eventfd, the strength stays unknown");
++		return;
++	}
++	/* the thread takes no signals, as the backlight's does not */
++	sigset_t all, old;
++	sigfillset(&all);
++	pthread_sigmask(SIG_BLOCK, &all, &old);
++	pthread_t thread;
++	bool started = pthread_create(&thread, NULL, wifi_thread, NULL) == 0;
++	if (started) {
++		pthread_detach(thread);
++	}
++	pthread_sigmask(SIG_SETMASK, &old, NULL);
++	if (!started) {
++		return;
++	}
++	if (!wl_event_loop_add_fd(server->loop, wf.fd, WL_EVENT_READABLE, wifi_read_landed, server)) {
++		/* no source in the loop means no redraw ever: do not ask at all, and
++		 * leave usable 0 so no stale value is drawn either */
++		wlr_log(WLR_ERROR, "wifi: no event source, the strength stays unknown");
++		close(wf.fd);
++		wf.fd = -1;
++		return;		/* usable stays 0: nothing is asked, no stale redraw */
++	}
++	pthread_mutex_lock(&wf.lock);
++	wf.usable = 1;
++	pthread_mutex_unlock(&wf.lock);
++}
++
+ /*
+  * Status glyphs. Proportions are measured off a Windows Phone 8.1 status bar
+  * and expressed against the battery cell's height, which is what the eye
+@@ -5202,9 +5429,22 @@
+ /* What ztoscorenetworkingd last wrote about the modem (and the Wi-Fi link): a small
+  * file of key=value lines, read when it says so on the control pipe and with
+  * the clock. Nothing here waits on a program. */
++/* Older than this, a status file is a leftover and not a report: nothing here
++ * keeps it up to date, so it must not keep a dead reading alive. */
++#define STATUS_FRESH_S 90
++
+ static void modem_read(struct zt_server *server) {
+-	FILE *f = fopen("/run/ztoscorenetworking/status", "r");
+-	if (!f) f = fopen("/run/zrn-modem/status", "r");
++	const char *src = "/run/ztoscorenetworking/status";
++	FILE *f = fopen(src, "r");
++	if (!f) {
++		src = "/run/zrn-modem/status";
++		f = fopen(src, "r");
++	}
++	bool fresh = false;
++	if (f) {
++		struct stat st;
++		fresh = stat(src, &st) == 0 && st.st_mtime >= time(NULL) - STATUS_FRESH_S;
++	}
+ 	server->cell_known = f != NULL;
+ 	server->cell_bars = 0;
+ 	server->cell_sim[0] = server->cell_operator[0] = server->cell_tech[0] = server->cell_reg[0] = 0;
+@@ -5242,6 +5482,12 @@
+ 	if (f) {
+ 		fclose(f);
+ 	}
++	if (wifi > -2 && !fresh) {
++		/* the line is from a daemon that stopped writing (masked on ugglite):
++		 * it is not a reading, and must not look like one */
++		wifi = -2;
++		server->wifi_read_ms = 0;
++	}
+ 	if (wifi > -2) {
+ 		if (wifi >= 0) {
+ 			server->wifi_bars = wifi;
+@@ -5342,30 +5588,27 @@
+ 	cairo_restore(cr);
+ }
+ 
+-/* How many of the Wi-Fi glyph's three bands to light, or -1 with no link.
+- * Asked of the driver when the status row is drawn anyway (the minute, a
+- * power event, the action centre) and kept for a few seconds, as the row is
+- * drawn in three places; nothing wakes up to ask. */
++/* How many of the fan's three bands a strength fills. ztsettings' four arcs
++ * cut at 75, 55 and 35 %, so on its scale the top quarter of the circle is
++ * 75..100. The fan has one band fewer and is not a percentage readout: its
++ * top band is that same 75..100 (full), and the settings' next two bands
++ * (55 and 35) share the one below. A link whose strength is unknown is 0,
++ * the glyph with no band lit — never a full one. */
++static int wifi_bars_of_pct(int pct) {
++	return pct >= 75 ? 3 : pct >= 35 ? 2 : pct > 0 ? 1 : 0;
++}
++
++/* How many of the Wi-Fi glyph's three bands to light, -1 with no link. Reads
++ * only what has been measured: the status file when ztoscorenetworkingd has
++ * written it lately, else the last reading the worker took. Nothing in here
++ * waits on a program — the row is drawn from the frame path. */
+ static int wifi_bars(struct zt_server *server) {
+ 	uint32_t now = now_ms();
+-	/* If ztoscorenetworkingd reported active bars, use it */
++	/* If ztoscorenetworkingd reported active bars, use it while it is fresh */
+ 	if (server->wifi_read_ms && now - server->wifi_read_ms < 40000 && server->wifi_bars >= 0) {
+-		return server->wifi_bars;
+-	}
+-	/* Without it or if ztoscorenetworkingd had -1: check sysfs carrier/operstate */
+-	if (wifi_up()) {
+-		if (server->wifi_bars < 0) {
+-			server->wifi_bars = 3;
+-		}
+-		server->wifi_read_ms = now ? now : 1;
+-		return server->wifi_bars;
+-	}
+-	if (server->wifi_read_ms && now - server->wifi_read_ms < 40000) {
+ 		return server->wifi_bars;
+ 	}
+-	server->wifi_read_ms = now ? now : 1;
+-	server->wifi_bars = -1;
+-	return server->wifi_bars;
++	return wifi_sig_bars();
+ }
+ 
+ /* Whether any supply other than the battery itself is connected. */
+@@ -6135,6 +6378,7 @@
+ 	if (!server->screen_on || server->width == 0) {
+ 		return 0;	/* started again when the screen comes on */
+ 	}
++	wifi_tick();	/* the only place the signal is asked for */
+ 	/* the interface in use: Wi-Fi if it is up, else the mobile one */
+ 	char path[320], name[64] = "rmnet0";
+ 	if (wifi_bars(server) >= 0) {
+@@ -7939,8 +8183,7 @@
+ 		run_detached("nmcli", "radio", "wifi", server->shade_wifi ? "on" : "off");
+ 		if (!server->shade_wifi) {
+ 			/* gone now, whatever was last measured */
+-			server->wifi_bars = -1;
+-			server->wifi_read_ms = now_ms();
++			wifi_forget();
+ 		}
+ 		draw_shade(server);
+ 		draw_status(server);
+@@ -7991,8 +8234,7 @@
+ 		server->shade_wifi = !server->shade_airplane;
+ 		run_detached("nmcli", "radio", "wifi", server->shade_airplane ? "off" : "on");
+ 		if (!server->shade_wifi) {
+-			server->wifi_bars = -1;
+-			server->wifi_read_ms = now_ms();
++			wifi_forget();
+ 		}
+ 		draw_shade(server);
+ 		draw_status(server);
+@@ -10416,8 +10658,7 @@
+ 		if (server->wifi_suspend && wifi_up()) {
+ 			server->wifi_suspended_by_sleep = true;
+ 			run_detached("nmcli", "radio", "wifi", "off");
+-			server->wifi_bars = -1;
+-			server->wifi_read_ms = now_ms();
++			wifi_forget();
+ 		}
+ 	}
+ 	if (on) {
+@@ -14477,6 +14718,7 @@
+ 		wlr_log(WLR_INFO, "nested: in a window, hardware and system actions off");
+ 	}
+ 	backlight_init(&server);
++	wifi_sig_init(&server);	/* the strength, read off the loop's thread */
+ 	/* (load_config ran before the loop) */
+ 	if (bl.mode == BL_TABLE) {
+ 		ramp_snap(server.shade_brightness);
