@@ -13,10 +13,15 @@ A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
 The full licence text is in LICENSES/GPL-3.0-or-later.txt.
 
+The kernel patch under patches/kernel/ is a derivative of a GPL-2.0-only Linux
+kernel file. It keeps that licence and the upstream copyright; the verbatim
+GPL-2.0 text is in LICENSES/GPL-2.0-only.txt. Kernel material is not covered by
+the GPL-3.0-or-later grant above.
+
 SCOPE — this notice covers original material only: the device layer files,
 documentation and README in this repository. It does NOT relicense third-party
-code. The patches under devices/xiaomi-ugglite/patches/ are derivative works of ztOS
-source files that declare `GPL-2.0-or-later`; they are distributed under
+code. The patches under patches/ and devices/xiaomi-ugglite/patches/ are
+derivative works of ztOS source files that declare `GPL-2.0-or-later`; they are distributed under
 GPL-3.0-or-later by exercising that "or any later version" option, and upstream
 copyright remains with the ztOS authors. This file does not claim that the
 upstream grant is GPL-3.0. No kernel source, firmware or upstream code is

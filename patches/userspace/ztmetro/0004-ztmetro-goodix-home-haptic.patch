@@ -1,0 +1,29 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-FileCopyrightText: the ztOS authors (upstream file below)
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch target: ztmetro/ztmetro.c, series position 4, on top of 0001-0003 applied to
+ztOS 94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf (upstream declares
+GPL-2.0-or-later; this derivative takes the "or later" option).
+Base source sha256: e5fde72c97963106f5e8d71c8283368d1b758c2e5014271a70f924bf69c07655
+Result source sha256: 954fce92b2bb7e47a184fb92e897c6ab5b60eaee1c308cfc7e146db84207ccbd
+Both ends of that chain were reproduced in this staging pass; see SERIES.md.
+Hunk bytes unchanged; upstream copyright stays with the ztOS authors.
+
+--- a/ztmetro/ztmetro.c
++++ b/ztmetro/ztmetro.c
+@@ -12914,9 +12914,11 @@
+ 				 * short on release */
+ 				return;
+ 			}
+-			/* the two touch keys answer every touch, locked or not: home
+-			 * is a button that clicks by itself */
+-			if (nav != NAV_START) {
++			/* the two touch keys answer every touch, locked or not:
++			 * home is a button that clicks by itself on the Samsung
++			 * keys, so it takes no pulse here; the Goodix keys click
++			 * nothing by themselves and need the bar's pulse */
++			if (nav != NAV_START || keyboard->nav_keys) {
+ 				hap(server, HAP_TAP, HG_NAV);
+ 			}
+ 			if (server->locked || server->auth_active) {

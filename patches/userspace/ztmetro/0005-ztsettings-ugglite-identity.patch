@@ -1,0 +1,296 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-License-Identifier: GPL-3.0-or-later
+Series: 0005 on ztOS 94b35c2a; touches ztmetro/core/ztos-hw.h and
+ztmetro/settings/ztsettings.c (both in the ztmetro source repository), which is
+why it is numbered in this directory. Hunk bytes unchanged.
+
+--- a/ztmetro/core/ztos-hw.h
++++ b/ztmetro/core/ztos-hw.h
+@@ -22,6 +22,28 @@
+ #define HW_S9_BACKLIGHT	"/sys/class/backlight/s9p-panel"
+ #define HW_S9_GPU	"/sys/class/devfreq/17500000.gpu"
+ 
++/* ugglite's, used when /etc/ztos/device names it (as ztdevices reads it):
++ * TI BQ27426 gauge, the panel's own backlight device, Adreno 308 devfreq. */
++#define HW_UG_BATTERY	"/sys/class/power_supply/bq27426-0"
++#define HW_UG_BACKLIGHT	"/sys/class/backlight/1a94000.dsi.0"
++#define HW_UG_GPU	"/sys/class/devfreq/1c00000.gpu"
++
++static inline bool hw_is_ugglite(void)
++{
++	static int known = -1;
++	char line[64] = "";
++	if (known < 0) {
++		FILE *f = fopen("/etc/ztos/device", "r");
++		if (f) {
++			if (fgets(line, sizeof(line), f))
++				line[strcspn(line, "\r\n")] = 0;
++			fclose(f);
++		}
++		known = strcmp(line, "xiaomi-ugglite") == 0;
++	}
++	return known;
++}
++
+ /* a property naming a node, or the S9's; `parent` drops the last component
+  * (CapacityNode is the capacity file, the battery is its folder) */
+ static inline const char *hw_node(char *cache, size_t size, bool *asked, const char *interface,
+@@ -51,21 +73,24 @@ static inline const char *hw_battery(void)
+ {
+ 	static char path[192];
+ 	static bool asked;
+-	return hw_node(path, sizeof(path), &asked, "Power1", "CapacityNode", true, HW_S9_BATTERY);
++	return hw_node(path, sizeof(path), &asked, "Power1", "CapacityNode", true,
++		       hw_is_ugglite() ? HW_UG_BATTERY : HW_S9_BATTERY);
+ }
+ 
+ static inline const char *hw_backlight(void)
+ {
+ 	static char path[192];
+ 	static bool asked;
+-	return hw_node(path, sizeof(path), &asked, "Display1", "Node", false, HW_S9_BACKLIGHT);
++	return hw_node(path, sizeof(path), &asked, "Display1", "Node", false,
++		       hw_is_ugglite() ? HW_UG_BACKLIGHT : HW_S9_BACKLIGHT);
+ }
+ 
+ static inline const char *hw_gpu(void)
+ {
+ 	static char path[192];
+ 	static bool asked;
+-	return hw_node(path, sizeof(path), &asked, "Perf1", "GpuDevfreq", false, HW_S9_GPU);
++	return hw_node(path, sizeof(path), &asked, "Perf1", "GpuDevfreq", false,
++		       hw_is_ugglite() ? HW_UG_GPU : HW_S9_GPU);
+ }
+ 
+ /* the charger: the S9's, or the first supply that is not a battery and has
+--- a/ztmetro/settings/ztsettings.c
++++ b/ztmetro/settings/ztsettings.c
+@@ -42,6 +42,24 @@
+ #include "zrnboard.h"
+ #include "../background-apps.h"
+ 
++/* The board this build runs on: /etc/ztos/device names it, the way ztdevices
++ * (../devices/ztdevices.c) reads it. Without the file every page keeps the S9's
++ * identity, so a build that runs on an S9 is unchanged. */
++static bool is_ugglite(void) {
++	static int known = -1;
++	char line[64] = "";
++	if (known < 0) {
++		FILE *f = fopen("/etc/ztos/device", "r");
++		if (f) {
++			if (fgets(line, sizeof(line), f))
++				line[strcspn(line, "\r\n")] = 0;
++			fclose(f);
++		}
++		known = strcmp(line, "xiaomi-ugglite") == 0;
++	}
++	return known;
++}
++
+ /* A file in the session's runtime directory: $XDG_RUNTIME_DIR, or
+  * /run/user/<our UID> when whatever started us did not set it. */
+ static const char *runtime_file(char *out, size_t size, const char *name) {
+@@ -917,18 +935,31 @@ static double draw_main(cairo_t *cr) {
+ 	snprintf(detail, sizeof(detail), "%d%%, %s", bat, app.battery_saver ? "battery saver on" : "discharging");
+ 	y = zmc_entry(cr, y, "battery saver", detail, ACT_OPEN_PAGE, PAGE_BATTERY);
+ 
+-	snprintf(detail, sizeof(detail), "Exynos 9810 (8 cores), %s", app.cpu_gov);
++	bool ug = is_ugglite();
++	/* Capacity is not a platform constant: read what the kernel reports. */
++	char ram_cap[32] = "3.5 GB RAM";
++	if (ug) {
++		struct sysinfo si;
++		if (sysinfo(&si) == 0 && si.totalram)
++			snprintf(ram_cap, sizeof(ram_cap), "%.2f GB RAM",
++				 (double)si.totalram * si.mem_unit / 1e9);
++		else
++			snprintf(ram_cap, sizeof(ram_cap), "RAM");
++	}
++
++	snprintf(detail, sizeof(detail), "%s, %s", ug ? "MSM8917 (4 cores)" : "Exynos 9810 (8 cores)", app.cpu_gov);
+ 	y = zmc_entry(cr, y, "processor", detail, ACT_OPEN_PAGE, PAGE_CPU);
+ 
+-	snprintf(detail, sizeof(detail), "3.5 GB RAM, swappiness %d", app.swappiness);
++	snprintf(detail, sizeof(detail), "%s, swappiness %d", ram_cap, app.swappiness);
+ 	y = zmc_entry(cr, y, "virtual memory", detail, ACT_OPEN_PAGE, PAGE_VM);
+ 
+-	snprintf(detail, sizeof(detail), "Mali-G72 MP18 (%s), 60 FPS", app.gpu_gov);
++	snprintf(detail, sizeof(detail), "%s (%s)", ug ? "Adreno 308" : "Mali-G72 MP18", app.gpu_gov);
+ 	y = zmc_entry(cr, y, "graphics", detail, ACT_OPEN_PAGE, PAGE_GPU);
+ 
+ 	y = zmc_entry(cr, y, "date + region", "date, time zone and regional formats", ACT_OPEN_PAGE, PAGE_DATE);
+ 
+-	y = zmc_entry(cr, y, "about", "Samsung Galaxy S9, ztOS Mobile", ACT_OPEN_PAGE, PAGE_ABOUT);
++	y = zmc_entry(cr, y, "about", ug ? "Xiaomi Redmi Note 5A, ztOS Mobile"
++					   : "Samsung Galaxy S9, ztOS Mobile", ACT_OPEN_PAGE, PAGE_ABOUT);
+ 
+ 	return y + 20;
+ }
+@@ -2604,6 +2635,7 @@ static double draw_audio(cairo_t *cr) {
+ 
+ static double draw_battery(cairo_t *cr) {
+ 	double y = zmc_header(cr, "battery saver");
++	bool ug = is_ugglite();
+ 
+ 	char cap[32], stat[32], volt[32];
+ 	read_sys_file(hw_file(hw_battery(), "capacity"), cap, sizeof(cap));
+@@ -2620,7 +2652,8 @@ static double draw_battery(cairo_t *cr) {
+ 
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+ 	char est[64];
+-	snprintf(est, sizeof(est), "%s, %.2f V, Maxim MAX17055", stat[0] ? stat : "Discharging", v);
++	snprintf(est, sizeof(est), "%s, %.2f V, %s", stat[0] ? stat : "Discharging", v,
++		 ug ? "TI BQ27426" : "Maxim MAX17055");
+ 	zmc_text(cr, est, FONT_REGULAR, 14, MARGIN, y, 0);
+ 	y += 36;
+ 
+@@ -2635,7 +2668,8 @@ static double draw_battery(cairo_t *cr) {
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+ 	zmc_text(cr, "Battery information", FONT_REGULAR, 13, MARGIN, y, 0);
+ 	cairo_set_source_rgb(cr, 1, 1, 1);
+-	zmc_text(cr, "3000 mAh Li-Ion, Health Good", FONT_REGULAR, 15, MARGIN, y + 20, 0);
++	zmc_text(cr, ug ? "3080 mAh Li-Ion (BQ27426-0), Health Good"
++			: "3000 mAh Li-Ion, Health Good", FONT_REGULAR, 15, MARGIN, y + 20, 0);
+ 
+ 	return y + 60;
+ }
+@@ -2643,6 +2677,7 @@ static double draw_battery(cairo_t *cr) {
+ static double draw_cpu(cairo_t *cr) {
+ 	double y = zmc_header(cr, "processor");
+ 
++	bool ug = is_ugglite();
+ 	char p0_f[32], p4_f[32], load[64];
+ 	read_sys_file("/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq", p0_f, sizeof(p0_f));
+ 	read_sys_file("/sys/devices/system/cpu/cpufreq/policy4/scaling_cur_freq", p4_f, sizeof(p4_f));
+@@ -2653,24 +2688,42 @@ static double draw_cpu(cairo_t *cr) {
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+ 	zmc_text(cr, "SoC Architecture", FONT_REGULAR, 13, MARGIN, y, 0);
+ 	cairo_set_source_rgb(cr, 1, 1, 1);
+-	zmc_text(cr, "Samsung Exynos 9810 (10nm LPP)", FONT_SEMILIGHT, 20, MARGIN, y + 18, 0);
++	zmc_text(cr, ug ? "Qualcomm Snapdragon 425 (MSM8917)"
++			: "Samsung Exynos 9810 (10nm LPP)", FONT_SEMILIGHT, 20, MARGIN, y + 18, 0);
+ 	y += 56;
+ 
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+-	zmc_text(cr, "LITTLE Cluster (Cores 0-3, Cortex-A55)", FONT_REGULAR, 13, MARGIN, y, 0);
++	zmc_text(cr, ug ? "Cluster (Cores 0-3, Cortex-A53)"
++			: "LITTLE Cluster (Cores 0-3, Cortex-A55)", FONT_REGULAR, 13, MARGIN, y, 0);
+ 	char c0_str[64];
+-	snprintf(c0_str, sizeof(c0_str), "%.0f MHz (350 - 1794 MHz)", f0);
++	if (ug) {
++		char lo_f[32] = "", hi_f[32] = "";
++		read_sys_file("/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq", lo_f, sizeof(lo_f));
++		read_sys_file("/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq", hi_f, sizeof(hi_f));
++		/* nothing on this page is guessed: an unreadable clock prints no clock */
++		if (!p0_f[0])
++			snprintf(c0_str, sizeof(c0_str), "Frequency not readable");
++		else if (lo_f[0] && hi_f[0])
++			snprintf(c0_str, sizeof(c0_str), "%.0f MHz (%d - %d MHz)", f0,
++				 atoi(lo_f) / 1000, atoi(hi_f) / 1000);
++		else
++			snprintf(c0_str, sizeof(c0_str), "%.0f MHz", f0);
++	} else {
++		snprintf(c0_str, sizeof(c0_str), "%.0f MHz (350 - 1794 MHz)", f0);
++	}
+ 	cairo_set_source_rgb(cr, 1, 1, 1);
+ 	zmc_text(cr, c0_str, FONT_REGULAR, 16, MARGIN, y + 20, 0);
+ 	y += 52;
+ 
+-	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+-	zmc_text(cr, "BIG Cluster (Cores 4-7, M3 Cheetah)", FONT_REGULAR, 13, MARGIN, y, 0);
+-	char c4_str[64];
+-	snprintf(c4_str, sizeof(c4_str), "%.0f MHz (400 - 2704 MHz)", f4);
+-	cairo_set_source_rgb(cr, 1, 1, 1);
+-	zmc_text(cr, c4_str, FONT_REGULAR, 16, MARGIN, y + 20, 0);
+-	y += 52;
++	if (!ug) {
++		cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
++		zmc_text(cr, "BIG Cluster (Cores 4-7, M3 Cheetah)", FONT_REGULAR, 13, MARGIN, y, 0);
++		char c4_str[64];
++		snprintf(c4_str, sizeof(c4_str), "%.0f MHz (400 - 2704 MHz)", f4);
++		cairo_set_source_rgb(cr, 1, 1, 1);
++		zmc_text(cr, c4_str, FONT_REGULAR, 16, MARGIN, y + 20, 0);
++		y += 52;
++	}
+ 
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+ 	zmc_text(cr, "CPU Governor (tap to switch)", FONT_REGULAR, 13, MARGIN, y, 0);
+@@ -2697,7 +2750,9 @@ static double draw_vm(cairo_t *cr) {
+ 	double used_ram = total_ram - free_ram;
+ 
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+-	zmc_text(cr, "Physical Memory (LPDDR4X)", FONT_REGULAR, 13, MARGIN, y, 0);
++	bool ug = is_ugglite();
++	zmc_text(cr, ug ? "Physical Memory" : "Physical Memory (LPDDR4X)",
++		 FONT_REGULAR, 13, MARGIN, y, 0);
+ 	char ram_str[64];
+ 	snprintf(ram_str, sizeof(ram_str), "%.2f GB used of %.2f GB", used_ram, total_ram);
+ 	cairo_set_source_rgb(cr, 1, 1, 1);
+@@ -2715,7 +2770,7 @@ static double draw_vm(cairo_t *cr) {
+ 		double total_disk = (double)fs.f_blocks * fs.f_frsize / 1e9;
+ 		double free_disk = (double)fs.f_bavail * fs.f_frsize / 1e9;
+ 		cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+-		zmc_text(cr, "UFS 2.1 Storage", FONT_REGULAR, 13, MARGIN, y, 0);
++		zmc_text(cr, ug ? "Storage" : "UFS 2.1 Storage", FONT_REGULAR, 13, MARGIN, y, 0);
+ 		char disk_str[64];
+ 		snprintf(disk_str, sizeof(disk_str), "%.1f GB free of %.1f GB", free_disk, total_disk);
+ 		cairo_set_source_rgb(cr, 1, 1, 1);
+@@ -2729,6 +2784,7 @@ static double draw_vm(cairo_t *cr) {
+ static double draw_gpu(cairo_t *cr) {
+ 	double y = zmc_header(cr, "graphics");
+ 
++	bool ug = is_ugglite();
+ 	char cur_f[32];
+ 	read_sys_file(hw_file(hw_gpu(), "cur_freq"), cur_f, sizeof(cur_f));
+ 	double mhz = cur_f[0] ? atoi(cur_f) / 1000000.0 : 260.0;
+@@ -2736,13 +2792,27 @@ static double draw_gpu(cairo_t *cr) {
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+ 	zmc_text(cr, "GPU Engine", FONT_REGULAR, 13, MARGIN, y, 0);
+ 	cairo_set_source_rgb(cr, 1, 1, 1);
+-	zmc_text(cr, "ARM Mali-G72 MP18 (Bifrost)", FONT_SEMILIGHT, 21, MARGIN, y + 18, 0);
++	zmc_text(cr, ug ? "Qualcomm Adreno 308" : "ARM Mali-G72 MP18 (Bifrost)",
++		 FONT_SEMILIGHT, 21, MARGIN, y + 18, 0);
+ 	y += 56;
+ 
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+ 	zmc_text(cr, "Clock frequency", FONT_REGULAR, 13, MARGIN, y, 0);
+ 	char f_str[64];
+-	snprintf(f_str, sizeof(f_str), "%.0f MHz (260, 455, 572 MHz)", mhz);
++	if (ug) {
++		char lo_f[32] = "", hi_f[32] = "";
++		read_sys_file(hw_file(hw_gpu(), "min_freq"), lo_f, sizeof(lo_f));
++		read_sys_file(hw_file(hw_gpu(), "max_freq"), hi_f, sizeof(hi_f));
++		if (!cur_f[0])
++			snprintf(f_str, sizeof(f_str), "Frequency not readable");
++		else if (lo_f[0] && hi_f[0])
++			snprintf(f_str, sizeof(f_str), "%.0f MHz (%.1f - %.1f MHz)", mhz,
++				 atoi(lo_f) / 1000000.0, atoi(hi_f) / 1000000.0);
++		else
++			snprintf(f_str, sizeof(f_str), "%.0f MHz", mhz);
++	} else {
++		snprintf(f_str, sizeof(f_str), "%.0f MHz (260, 455, 572 MHz)", mhz);
++	}
+ 	cairo_set_source_rgb(cr, 1, 1, 1);
+ 	zmc_text(cr, f_str, FONT_REGULAR, 16, MARGIN, y + 20, 0);
+ 	y += 52;
+@@ -2757,7 +2827,8 @@ static double draw_gpu(cairo_t *cr) {
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+ 	zmc_text(cr, "Display Hardware", FONT_REGULAR, 13, MARGIN, y, 0);
+ 	cairo_set_source_rgb(cr, 1, 1, 1);
+-	zmc_text(cr, "Super AMOLED 1440x2960 @ 60.00 Hz", FONT_REGULAR, 15, MARGIN, y + 20, 0);
++	zmc_text(cr, ug ? "LCD 720x1280"
++			: "Super AMOLED 1440x2960 @ 60.00 Hz", FONT_REGULAR, 15, MARGIN, y + 20, 0);
+ 	y += 52;
+ 
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+@@ -2845,7 +2916,9 @@ static double draw_about(cairo_t *cr) {
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+ 	zmc_text(cr, "Phone", FONT_REGULAR, 13, MARGIN, y, 0);
+ 	cairo_set_source_rgb(cr, 1, 1, 1);
+-	y += zmc_text(cr, "Samsung Galaxy S9 (SM-G960N starlte)", FONT_SEMILIGHT, 19, MARGIN, y + 18, zmc.width - 2 * MARGIN) + 30;
++	y += zmc_text(cr, is_ugglite() ? "Xiaomi Redmi Note 5A (ugglite, MSM8917)"
++				       : "Samsung Galaxy S9 (SM-G960N starlte)",
++		      FONT_SEMILIGHT, 19, MARGIN, y + 18, zmc.width - 2 * MARGIN) + 30;
+ 
+ 	cairo_set_source_rgb(cr, 0.6, 0.6, 0.6);
+ 	zmc_text(cr, "Operating System", FONT_REGULAR, 13, MARGIN, y, 0);

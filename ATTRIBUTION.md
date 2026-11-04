@@ -40,8 +40,10 @@ source root, so `ztmetro/ztmetro.c` means `<ztOS>/ztmetro/ztmetro.c`.
 | `ztsettings-config-dir-mkdir.patch` | `ztmetro/settings/ztsettings.c` | built and installed; visible effect not separately accepted |
 | `ugglite-wifi-bars.patch` | `ztmetro/ztmetro.c` | built and installed; Wi-Fi remains limited |
 
-No kernel patch is included. The panel, Wi-Fi rate and RTC experiments are
-described in `docs/hardware-status.md` but their sources are deliberately absent.
+One kernel patch is included at `patches/kernel/0001-wcn36xx-dynamic-ra-start-rate.patch`
+(GPL-2.0-only, one line; measured bounds in `SERIES.md`). The kernel tree
+itself, the panel experiment and the RTC patch are not published — `SERIES.md`
+and `MAP.md` state the reason for each.
 
 ## Device facts
 

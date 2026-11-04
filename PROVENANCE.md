@@ -1,0 +1,76 @@
+# Provenance and licence boundaries
+
+Rule applied to every file here: **the repository's own `LICENSE` never
+relicenses someone else's code.** Per-area terms:
+
+| Area | Upstream terms | What this repository may claim |
+|---|---|---|
+| `ztmetro`, `ztsettings` patches | `SPDX-License-Identifier: GPL-2.0-or-later` in the upstream files (ztOS also ships a GPL-3.0 text at its root) | derivative under `GPL-3.0-or-later` by taking the "or later" option; upstream copyright stays with the ztOS authors; hunk bytes unchanged |
+| kernel patches (`patches/kernel/**`) | Linux kernel, `GPL-2.0-only` | same terms, nothing additional granted; the "or later" option does **not** exist for the kernel tree, so no GPL-3.0 labelling is applied to it |
+| `build-environment/*` (Dockerfile, prepare/finalize, repack) | original work of this project | `GPL-3.0-or-later` |
+| `devices/xiaomi-ugglite/*` | original work, except patches | `GPL-3.0-or-later` |
+| lk2nd, pmaports, firmware, kernel binaries | upstream projects | not redistributed here; referenced by URL + tag only |
+| docs (`README*`, `docs/**`, `SERIES.md`, `MAP.md`, `PROVENANCE.md`, `NOTICE.md`) | original work of this project | `GPL-3.0-or-later`; no upstream text is relabelled |
+
+Unknown or unclear licence → **excluded**, with the reason written down in
+`MAP.md`, never guessed into a licence header.
+
+## What each added file is, and how it was derived
+
+* `patches/userspace/ztmetro/0001-…` — copy of the already-published patch, plus
+  the SPDX header the earlier publication prepended. Content otherwise
+  byte-identical (verified with `cmp` against the working copy).
+* `patches/userspace/ztmetro/0002-…` — copy of
+  `devices/xiaomi-ugglite/patches/ugglite-wifi-bars.patch` (the version still
+  published at the device path) with a header noting its series position and the
+  before/after source hashes. Hunk bytes unchanged.
+* `patches/userspace/ztmetro/0003-…` — copy of
+  `devices/…/ztmetro-brightness-no-frame-per-tick.patch`, hunk bytes unchanged.
+  It was staged as experimental at first, then moved into the series: applying
+  0001–0003 reproduces the accepted source `e5fde72c` exactly, so it is required
+  to reproduce the accepted binary, not an optional experiment. It is not a
+  brightness fix claim.
+* `patches/userspace/ztmetro/0004-…` — the working copy
+  `devices/…/ztmetro-goodix-home-haptic.patch` (sha256
+  `12c69ab5fc89f22e68ce379cac43f7edd0d0b8ee17810fab8c477bd10858af6f`) with a
+  header stating the series position, base and result source hashes. Hunk bytes
+  unchanged; the full series was applied end to end in this pass and lands on
+  `954fce92`.
+* `patches/userspace/ztmetro/0005-…` — working copy of
+  `ztsettings-ugglite-identity.patch`, unmodified.
+* `patches/userspace/ztmetro/experimental/zrnvibe-ff-rumble.patch` — working
+  copy, unmodified, out of the default series: no accepted-build evidence in
+  this pass.
+* `patches/kernel/0001-…` — working copy of `wcn36xx-start-rate-0.patch` plus a
+  `GPL-2.0-only` header. The stale `/* MCS 5 */` trailing comment is
+  **preserved**, not fixed, so the hunk stays byte-identical to the one that was
+  measured. The header also names the upstream tree, tag and file and states
+  that the original copyright is retained and none is claimed by this project.
+* `docs/BUILD-AND-BOOT.md` — the build/boot recipe, written here. Staged as
+  `build/BUILD-AND-BOOT.md` first; moved because `build/` is ignored by the
+  public repository's `.gitignore`, so a plain `git add` would have dropped it
+  without a sound.
+* `docs-public/*` — proposed replacements for the public `README.md`,
+  `README.ru.md` and `docs/hardware-status.md`; original work, no upstream text
+  copied into them.
+* `patches/kernel/experimental/panel-otm1901a-lpm-errorpath.diff` — copy of the
+  one-hunk diff from `build/display-minimal-lpm-fix/`, with base and patched
+  source hashes. The full patched `.c` is not shipped: it is a generated kernel
+  file, regenerable from the pinned tree plus this diff.
+* `build-environment/*` — verbatim copies. No host path, container name,
+  credential or SSH alias was introduced; the scripts were checked for
+  `/Users/…` and other personal paths and contain none.
+
+## Provenance of the measurements quoted in `SERIES.md`
+
+Quotes are copied from the working notes, not re-measured:
+
+* haptic rebuild determinism — `build/touchkey-home-haptic/HASHES.txt`
+  (`accepted-rebuild.log` byte-identical to the accepted build log);
+* wcn36xx 67–80 % / 0 % loss — the patch's own commit message
+  (`devices/…/wcn36xx-start-rate-0.patch`), 690 frames, one AP and one station;
+* LPM module load without a visible brightness change —
+  `build/display-minimal-lpm-fix/manifest.json`, `not_verified` block.
+
+If any of these need to be restated publicly as a current fact, they should be
+re-measured; here they are attributed, not asserted.

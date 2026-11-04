@@ -2,88 +2,95 @@
 
 *Русская версия: [README.ru.md](README.ru.md)*
 
-Device overlay, build notes and a small set of accepted patches for running
-[ztOS](https://github.com/Zerone-Laboratories/ztOS) on the Xiaomi Redmi Note 5A
-(`ugglite`, Qualcomm MSM8917, Adreno 308), using the mainline
-`linux-postmarketos-qcom-msm89x7` kernel and lk2nd as the bootloader.
+Device layer, build recipe and a small, explicitly tracked patch series for
+running [ztOS](https://github.com/Zerone-Laboratories/ztOS) on the Xiaomi Redmi
+Note 5A (`ugglite`, Qualcomm MSM8917, Adreno 308) with the mainline
+`linux-postmarketos-qcom-msm89x7` kernel and lk2nd as the first stage.
 
-**This is an unofficial, experimental, host-assisted RAM-boot adaptation. It is
-not a product, not an installer and not an officially supported ztOS device.**
-Nothing here is endorsed by the ztOS or postmarketOS projects. Do not expect a
-one-command install: the verified state is a hand-built root filesystem booted
-over USB from a host, and several core functions are unverified or broken — the
-most recent experimental UI/display builds are among them, and the UI brightness
-slider does not work (see [status](docs/hardware-status.md)).
+Unofficial and experimental. Not a product, not an installer, not an endorsed
+ztOS or postmarketOS device. Verified state is a hand-assembled root filesystem
+booted from a host over USB; several core functions are unverified or broken.
 
-## What actually works, and what does not
-
-Short version, as of the last hardware session:
+## Hardware status
 
 | Area | State |
 |---|---|
-| Kernel / RAM boot to userspace | works (ztOS baseline `4fed0f28…` booted via lk2nd) |
-| Display | baseline display confirmed working by the device owner; replacement builds did not pass — one produced a black screen, a later experimental UI build regressed the brightness slider; rollback to the previous UI build was still in progress when this was written |
-| Brightness control | **not working from the UI.** The compositor path reaches the kernel and writes backlight values (50/65/77 % → raw 128/166/196), yet the visible brightness does not change and the slider jitters. A successful sysfs write is not a working slider and is not reported as a fix |
-| Audio | stock path plays with idle hiss; a replacement (C2) was rejected on hardware |
-| Wi-Fi | works with limitations (throughput/rate behaviour not fixed) |
-| RTC write | **unsafe, do not attempt** — cause of the crash is not established |
-| Modem, camera, suspend | **not verified** — no claims are made |
+| Kernel + userspace boot over USB (lk2nd → RAM candidate) | works |
+| Display, baseline | works — confirmed by the device owner |
+| Display, replacement/UI builds | **not accepted**; brightness slider does not change the panel, one earlier candidate went black and was rolled back |
+| Wi-Fi | associates and passes traffic; rate/throughput under load not fixed |
+| Audio | stock path plays, with audible hiss while idle; the replacement path was rejected on hardware |
+| RTC write | **unsafe — do not attempt**; root cause not established |
+| Modem, camera, suspend | unverified, no claims |
 
-Details, evidence boundaries and open failure modes: [docs/hardware-status.md](docs/hardware-status.md).
+Details and the exact evidence boundary: [docs/hardware-status.md](docs/hardware-status.md).
+Safety notes before touching the device: [docs/safety.md](docs/safety.md).
 
-## Repository layout
+## What is in here
 
 ```
 devices/xiaomi-ugglite/
-  device.toml                 registry entry (pmaports pins, kernel, lk2nd, SoC)
+  device.toml                 registry entry: pmaports pin, kernel, DTB, lk2nd subpackage
   layer.sh                    apply <root>: copy overlay/ into an existing root
   fixups.sh                   idempotent post-copy fixes (setuid, pacman sandbox)
   packages.txt                extra packages for the assembled root
   overlay/                    files copied over the assembled root
-  patches/                    device patches accepted during bring-up
-docs/                         hardware status and safety notes
-LICENSES/                     full licence texts; see NOTICE.md for per-area scope
+  patches/                    patch series, see SERIES.md
+build-environment/
+  Dockerfile                  native aarch64 Arch Linux ARM build image
+  prepare-kernel.sh           kernel build in a separate container, pinned pmaports
+  finalize-kernel.sh          in-container build/verify/export, refuses drift
+  repack-boot-init.py         replace only init inside an existing boot image
+docs/                         hardware status, safety
+SERIES.md                     patch order, base commits, hash chain, apply commands
+PROVENANCE.md                 per-file licence terms and derivation
+MAP.md                        every working component → path, or why excluded
+LICENSES/, NOTICE.md          full licence texts and per-area scope
 ```
 
-`device.toml` intentionally leaves `[boot].rootfs_target` unset: the carrier
-choice belongs to whoever builds the image, and the build driver requires it
-explicitly. The entry is therefore **not** self-sufficient; it is an input, not
-a finished device package.
+Patch series: five `ztmetro`/`ztsettings` deltas plus one kernel delta, in
+`SERIES.md` order. `SERIES.md` "One authority" says which copies are the series
+and which are historical mirrors. `patches/**/experimental/` is not part of the
+default series and is not a feature claim.
 
-## Build and boot — what is reproducible
+## Reproducing a build
 
-Only the *inputs* are reproducible here, not an image. The build needs a host
-with pacstrap/arch-chroot (or pmbootstrap), `mkbootimg`, `mke2fs`, and an
-aarch64 cross setup; this repository contains no binaries, no kernel, no
-firmware and no image. The verified path was:
+You need: git, Docker, an aarch64-capable container host (the build runs native
+aarch64, no qemu), `fastboot` on the host, and a phone already prepared with
+lk2nd. Then:
 
-1. Assemble an Arch Linux ARM root with the pinned kernel package
-   (`linux-postmarketos-qcom-msm89x7` 7.1.3-r1) and the ugglite DTB
-   `qcom/msm8917-xiaomi-ugglite.dtb`.
-2. Apply this layer with `layer.sh apply <root>`, then `fixups.sh <root>`.
-3. Boot that root as a RAM candidate through lk2nd, with USB as the only
-   console — never by flashing a partition.
+1. Build the environment image from `build-environment/Dockerfile`.
+2. `sh build-environment/prepare-kernel.sh` — pinned pmaports, pinned kernel tag,
+   signature verified.
+3. Assemble an Arch Linux ARM aarch64 root, apply this layer
+   (`layer.sh apply <root>`, then `fixups.sh <root>`).
+4. Wrap the root as a RAM candidate with `repack-boot-init.py`.
+5. `fastboot boot <candidate>` — boot, never flash.
 
-Because the assembled root lived on the host and in `userdata`, **no automatic
-installer, no rollback image and no recovery procedure is published here.** If
-you do not already have a working host-assisted boot, this repository will not
-give you one.
+This is the whole reproducible path, and it is **not** complete on its own:
+the root assembly step has no pinned package list or ArchLinuxARM tarball
+checksum, and nothing here installs to `userdata`. The exact remaining gaps are
+listed in [docs/BUILD-AND-BOOT.md](docs/BUILD-AND-BOOT.md#gaps--what-a-stranger-still-cannot-do-end-to-end).
+There is no installer, no recovery image and no rollback image in this
+repository, on purpose.
 
-Pinned upstream revisions and their provenance are recorded in
-[ATTRIBUTION.md](ATTRIBUTION.md); they are the revisions the notes were written
-against, not a guarantee that they still build.
+Upstream revisions are pinned by URL and commit in `ATTRIBUTION.md`; those are
+the revisions the patches were made against, not a promise they still build.
 
-## Status and scope of this publication
+## Scope of this publication
 
-- Not an official ztOS or postmarketOS artefact; no upstream endorsement.
-- No support promise. Issues are read, but a broken device is your own risk.
-- Excluded on purpose: binaries, images, firmware, private configuration,
-  network profiles, credentials, raw hardware logs and unverified experimental
-  patches. See [NOTICE.md](NOTICE.md) for the exact allowlist rationale.
+- No binaries, images, kernel packages, firmware or built logs.
+- No credentials, network profiles, host names, machine identifiers or personal
+  paths.
+- No RTC write patch: it is unsafe on this hardware.
+- Rejected or unaccepted experiments are not published as features; where a
+  source delta has real value but no acceptance, it lives under `experimental/`
+  with its limitation stated.
 
 ## Licence
 
-Original adaptation material in this repository is licensed under
-GPL-3.0-or-later. Patch files are derivative works of the projects they modify
-and keep those projects' terms. `NOTICE.md` states which file is under which
-licence; the root `LICENSE` does not relicense third-party code.
+Original adaptation material: GPL-3.0-or-later. Patch files are derivative works
+of the projects they modify and keep those projects' terms — userspace patches
+GPL-3.0-or-later (upstream is GPL-2.0-or-later), kernel patches GPL-2.0-only.
+`NOTICE.md` and `PROVENANCE.md` state which file is under which terms; the root
+`LICENSE` does not relicense third-party code.

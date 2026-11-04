@@ -1,0 +1,104 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-License-Identifier: GPL-3.0-or-later
+Experimental: no accepted-build evidence; not in the default series.
+
+diff --git a/ztmetro/core/zrnvibe.h b/ztmetro/core/zrnvibe.h
+--- a/ztmetro/core/zrnvibe.h
++++ b/ztmetro/core/zrnvibe.h
+@@ -3,7 +3,8 @@
+  *
+  * A pattern is a list of pulses (on_ms at pct of full strength, then gap_ms of
+  * stillness) repeated every loop_ms. A child process plays it on the motor's
+- * force-feedback device (zrn-haptic) until it is sent SIGTERM, when it brakes
++ * force-feedback device (whatever input node takes a rumble effect) until
++ * it is sent SIGTERM, when it brakes
+  * the motor and exits. Each pulse is one rumble effect of its own length, so
+  * even if the child is killed outright the motor stops within one pulse.
+  *
+@@ -207,19 +208,74 @@
+ 	return true;
+ }
+ 
++/* An input node that can take a rumble effect. The capability test is the
++ * criterion; the name only says which to prefer when a machine has more than
++ * one rumble node. Uploading one silent effect and dropping it proves the FF
++ * core works without moving the motor, so a node that merely advertises the
++ * bit is not taken for the phone's motor. */
++static bool vibe_takes_rumble(int fd, size_t word) {
++	unsigned long bits[(FF_MAX + 1 + 8 * sizeof(unsigned long) - 1) / (8 * sizeof(unsigned long))] = {0};
++	if (ioctl(fd, EVIOCGBIT(EV_FF, sizeof(bits)), bits) < 0)
++		return false;
++	if (!(bits[FF_RUMBLE / word] & (1UL << (FF_RUMBLE % word))))
++		return false;
++	struct ff_effect e = {
++		.type = FF_RUMBLE,
++		.id = -1,
++		.u.rumble = { .strong_magnitude = 0, .weak_magnitude = 0 },
++		.replay = { .length = 1 },
++	};
++	if (ioctl(fd, EVIOCSFF, &e) < 0)
++		return false;
++	ioctl(fd, EVIOCRMFF, (int)e.id);
++	return true;
++}
++
++/* The motor is whatever input node takes a rumble effect, not a driver by
++ * name: a phone may have max77705 behind zrn-haptic, another the mainline
++ * gpio-vibrator, whose node is simply called "gpio-vibrator". Nodes named
++ * here win; any other rumble node is taken only if none of them exists, and
++ * still has to pass the same capability and upload test. */
+ static int vibe_open(void) {
+-	for (int i = 0; i < 16; i++) {
+-		char path[96], name[64] = "";
+-		snprintf(path, sizeof(path), "/sys/class/input/event%d/device/name", i);
+-		FILE *f = fopen(path, "r");
+-		if (!f) continue;
+-		if (fgets(name, sizeof(name), f)) name[strcspn(name, "\n")] = 0;
+-		fclose(f);
+-		if (!strcmp(name, "zrn-haptic")) {
+-			snprintf(path, sizeof(path), "/dev/input/event%d", i);
+-			return open(path, O_RDWR | O_CLOEXEC);
+-		}
+-	}
++	static const char *const motor_names[] = { "zrn-haptic", "gpio-vibrator" };
++	const size_t word = 8 * sizeof(unsigned long);
++	char fallback[64] = "";
++	DIR *dir = opendir("/dev/input");
++	struct dirent *entry;
++	while (dir && (entry = readdir(dir))) {
++		if (strncmp(entry->d_name, "event", 5) != 0)
++			continue;
++		char path[300];
++		snprintf(path, sizeof(path), "/dev/input/%s", entry->d_name);
++		int fd = open(path, O_RDWR | O_CLOEXEC);
++		if (fd < 0)
++			continue;
++		char name[64] = "";
++		if (ioctl(fd, EVIOCGNAME(sizeof(name)), name) < 0)
++			name[0] = 0;
++		if (!vibe_takes_rumble(fd, word)) {
++			close(fd);
++			continue;
++		}
++		for (size_t i = 0; i < sizeof(motor_names) / sizeof(motor_names[0]); i++) {
++			if (!strcmp(name, motor_names[i])) {
++				if (dir)
++					closedir(dir);
++				return fd;
++			}
++		}
++		if (!fallback[0]) {
++			snprintf(fallback, sizeof(fallback), "%s", path);
++			close(fd);	/* opened again below if nothing named turns up */
++		} else {
++			close(fd);
++		}
++	}
++	if (dir)
++		closedir(dir);
++	if (fallback[0])
++		return open(fallback, O_RDWR | O_CLOEXEC);
++	fprintf(stderr, "vibe: no input node takes a rumble effect\n");
+ 	return -1;
+ }
+ 

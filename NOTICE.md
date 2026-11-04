@@ -9,7 +9,9 @@ deliberately left out. It is the authoritative map for licensing questions.
 |---|---|---|---|
 | Device layer and docs (original work) | `device.toml`, `layer.sh`, `fixups.sh`, `packages.txt`, `overlay/**`, `docs/**`, `README*`, this file, `CONTRIBUTING.md` | GPL-3.0-or-later | Written for this adaptation; same licence family as the ztOS tree the layer plugs into. |
 | Patches against ztOS userspace | the five `.patch` files under `devices/xiaomi-ugglite/patches/` (each listed in `ATTRIBUTION.md`) | GPL-3.0-or-later | The upstream files they modify carry `GPL-2.0-or-later` in their SPDX headers. The patches are distributed under GPL-3.0-or-later by exercising the upstream "or any later version" option; the upstream grant itself is **not** GPL-3.0. Copyright in the upstream code stays with the ztOS authors. |
-| Licence text | `LICENSES/GPL-3.0-or-later.txt` | verbatim GPL-3.0 text | Copied unmodified from the ztOS repository (`upstream/ztOS/LICENSE`, 232 lines, sha256 `fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0`). |
+| Userspace patch series | `patches/userspace/ztmetro/0001`–`0005` and `experimental/` (same upstream terms) | GPL-3.0-or-later | Same basis as the device-layer copies; each file carries an SPDX header naming its series position and base. |
+| Kernel patch | `patches/kernel/0001-wcn36xx-dynamic-ra-start-rate.patch`, `patches/kernel/experimental/` | GPL-2.0-only | Derivative of the Linux kernel file it modifies. The "or later" option does **not** exist for the kernel tree, so no GPL-3.0 label is applied. Upstream copyright is retained and nothing further is granted. |
+| Licence texts | `LICENSES/GPL-3.0-or-later.txt`, `LICENSES/GPL-2.0-only.txt` | verbatim texts | GPL-3.0 copied unmodified from the ztOS repository (`upstream/ztOS/LICENSE`, 232 lines, sha256 `fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0`). GPL-2.0 copied unmodified from the FSF's canonical publication <https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt> (17 984 bytes, sha256 `edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6`). |
 
 The root `LICENSE` applies to original material only. It does **not** relicense
 third-party code, and no attempt is made to summarise or replace upstream terms.
@@ -28,8 +30,8 @@ third-party code, and no attempt is made to summarise or replace upstream terms.
   `linux-postmarketos-qcom-msm89x7` 7.1.3-r1).
 - lk2nd — <https://github.com/msm8916-mainline/lk2nd>, GPL-2.0-only. Bootloader;
   only its DTB name is referenced, no code is copied.
-- Linux kernel (msm89x7 mainline tree) — GPL-2.0-only. **No kernel source or
-  kernel patch is included** in this repository.
+- Linux kernel (msm89x7 mainline tree) — GPL-2.0-only. One one-line patch is
+  included under `patches/kernel/`; no kernel source tree is redistributed.
 
 No upstream project endorses this repository. "ztOS" and "postmarketOS" are used
 only to describe what the files plug into.
@@ -61,10 +63,7 @@ Included device files:
 | Build outputs, images, `*.img`, kernel packages, ramdisks, firmware, `*.ko` | Binaries; not source, not licensed for redistribution here, and easy to mistake for a supported artefact. |
 | Everything under the private project's `build/` except this staging tree | Contains logs, captures and intermediate state, some with device identifiers. |
 | `patches/rtc-allow-set-time.patch` | RTC write is unsafe and its failure cause is unresolved; publishing it would invite the exact operation that crashed the phone. |
-| `patches/wcn36xx-start-rate-0.patch` | Experimental kernel patch, not accepted upstream and not verified as a fix; kernel derivatives are GPL-2.0-only and need their own review. |
-| `patches/zrnvibe-ff-rumble.patch` | Never passed independent review; udev rule used a 0666 mode awaiting revision. |
-| `patches/ztmetro-goodix-home-haptic.patch` | Does not apply to the pinned ztOS revision (`git apply --check` fails); base/provenance unresolved, so it is not published. |
-| `patches/ztsettings-ugglite-identity.patch` | Current content does not match the hash of the accepted build; provenance unresolved, so it is not published. |
+| Local working copies that are now superseded by `patches/` | The haptic, settings-identity, wifi-bars and wcn36xx patches are published in the series with their bases and hashes; the rumble patch only as `experimental/`. Apply one set, never both (`SERIES.md`, "One authority"). |
 | Audio C2 material (`ucm2` override, `libspa-alsa` build) | Rejected on hardware; the ALSA UCM file's provenance is an unresolved mix of upstream and local edits. |
 | `overlay/etc/udev/rules.d/*`, `overlay/opt/zapret/*`, `overlay/etc/default/*`, `overlay/etc/systemd/**` | Device-specific permissions, third-party routing lists and service changes not reviewed for publication. |
 | `maintenance/` (SSH, modules-load, Wi-Fi autostart, keyring) | Contains host/service configuration and a private SSH daemon config; network-facing and not needed to reproduce the layer. |
