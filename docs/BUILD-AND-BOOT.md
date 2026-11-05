@@ -1,8 +1,8 @@
 # Build and boot — the recipe, and its honest gaps
 
 No image, kernel, firmware or binary is published. What follows is the source
-path with every external input pinned by URL and commit, plus the exact place
-where it still depends on something this repository cannot give you.
+path for the pinned source components. The Arch Linux ARM root and its package
+versions are still inputs to the full system build.
 
 ## Pinned inputs
 
@@ -18,14 +18,15 @@ where it still depends on something this repository cannot give you.
 ## Build environment
 
 `build-environment/Dockerfile` builds a native **aarch64** Arch Linux ARM image
-(`ztos-build-env:beta-1.2`). It is not an emulated build: ztOS *is* Arch Linux
-ARM, so the toolchain, pacman and the rootfs ABI match the target and no
-qemu/binfmt is involved.
+(`ztos-build-env:beta-1.2`). On an ARM64 host it runs natively. On an x86_64
+host, Docker needs working aarch64 binfmt emulation and an explicit ARM64
+platform. Kernel and userspace build commands still require their respective
+dependencies inside the container.
 
 ```sh
 git clone https://github.com/Zerone-Laboratories/ztOS.git
 git -C ztOS checkout 94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf
-docker build -t ztos-build-env:beta-1.2 build-environment/
+docker build --platform linux/arm64 -t ztos-build-env:beta-1.2 build-environment/
 ```
 
 Docker is a **prerequisite**, not an implementation detail: `prepare-kernel.sh`
@@ -53,8 +54,34 @@ script has no default password and stops with an error if it is unset.
   the prebuilt `linux-postmarketos-qcom-msm89x7-7.1.3-r1.apk` from a third-party
   mirror is **not** used (its signer is not the pmaports key).
 
-Kernel patches in `patches/kernel/` are applied to that tree in series order;
-`patches/kernel/experimental/` is not part of the default series.
+The kernel packaging command above exports the pinned pmaports package.
+It does not automatically apply this repository's kernel patches. See
+[SERIES.md](../SERIES.md) for their source bases and acceptance boundaries.
+
+## Userspace source and compositor
+
+From the root of this repository, with the upstream checkout from the commands
+above:
+
+```sh
+mkdir -p build
+sh build-environment/prepare-userspace.sh ztOS build/userspace
+```
+
+This extracts the pinned `ztmetro` subtree, applies the public series once,
+and checks the resulting `ztmetro.c` against the accepted source SHA256. Run
+`make -C build/userspace/ztmetro ztmetro` in an ARM64 Arch Linux ARM build
+environment with the development dependencies listed by `PKGS` in the
+upstream Makefile. The basic device build image does not supply all of them.
+In particular, provide `pkg-config`, the Wayland scanner and protocol XML,
+and wlroots 0.20 development files. The source hash is an acceptance gate for
+the patch series. It does not pin the toolchain or imply identical ELF bytes.
+
+The [camera DT fragments](../devices/xiaomi-ugglite/camera/) and the
+[DSI clocks patch](../patches/kernel/0002-dsi-preserve-video-clocks.patch)
+record the accepted camera topology and the kernel-side display change. They
+are reference inputs for integrators. The scripts in this repository do not
+yet package the exact tested kernel/module/DT composition into a boot image.
 
 ## Root filesystem and device layer
 
@@ -82,8 +109,8 @@ fastboot boot <candidate-boot.img>     # boot, never flash
 `build-environment/repack-boot-init.py` produces that image by replacing only the
 `init` entry inside an existing boot image (same page size, same cmdline, same
 dtb/second stage), which is how every display/UI candidate was made and rolled
-back. lk2nd (`lk2nd-msm8952-23.1`) is the first stage: it hands over to the
-candidate and stays flashed independently of it.
+back. lk2nd (`lk2nd-msm8952-23.1`) is the first stage and can itself be loaded
+with `fastboot boot` before booting the candidate.
 
 There is no default path that flashes a partition, no fallback to Android boot,
 and no image with an unconditional `reboot -f` timer. The 120 s `reboot -f`
@@ -102,7 +129,8 @@ not referenced by any recipe here.
    different revision is a hard stop, not a silent drift.
 3. **No hardware verification runs in this environment.** The build path is
    source-level only; nothing here was re-executed during packaging, and no
-   image was produced.
+   image was produced. Source preparation for the compositor was run against
+   the pinned upstream and matched the accepted source SHA256.
 4. **No installer, no recovery, no rollback image.** Publishing one is a
    separate scope (it writes `userdata`); only the architecture and parameters
    are described.

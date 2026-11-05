@@ -6,7 +6,7 @@ public repository or why it does not go there at all.
 
 ## One authority
 
-`patches/userspace/ztmetro/` (0001–0005) and `patches/kernel/0001` are the only
+`patches/userspace/ztmetro/` (0001–0006) and `patches/kernel/0001`–`0002` are the only
 series to apply. The device-layer copies named below stay published for the
 release that shipped them, but they are mirrors, not a second series: applying
 both double-applies 0001–0003 and the haptic hunk. `SERIES.md` states this first.
@@ -59,3 +59,12 @@ both double-applies 0001–0003 and the haptic hunk. `SERIES.md` states this fir
 | `devices/…/overlay/etc/ssh/*`, `ztos-ssh-start`, `wpa_supplicant`/network profiles | credentials and transport configuration |
 | `devices/…/overlay/usr/local/sbin/ztos-update`, `zboot-usb-gadget` | already public at HEAD; unchanged here (no new audit was done) |
 | firmware (`firmware-qcom-msm89x7` contents), `*.mbn`, `*.elf` | binary firmware, redistributed by pmaports under its own terms |
+
+## Display, battery and camera build inputs
+
+| Component | Public path |
+|---|---|
+| Exact ztMetro source preparation | `build-environment/prepare-userspace.sh` |
+| Accepted battery discovery | `patches/userspace/ztmetro/0006-ztmetro-battery-discovery.patch` |
+| DSI video clock preservation | `patches/kernel/0002-dsi-preserve-video-clocks.patch` |
+| CSI controller, sensor and endpoint sources | `devices/xiaomi-ugglite/camera/` |

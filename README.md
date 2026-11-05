@@ -17,13 +17,14 @@ booted from a host over USB; several core functions are unverified or broken.
 |---|---|
 | Kernel + userspace boot over USB (lk2nd → RAM candidate) | works |
 | Display, baseline | works — confirmed by the device owner |
-| Display, replacement/UI builds | **not accepted**; brightness slider does not change the panel, one earlier candidate went black and was rolled back |
+| Display brightness | Working on the accepted RAM build with preserved DSI video clocks. The owner confirmed smooth adjustment without frame shift |
 | Wi-Fi | associates and passes traffic; rate/throughput under load not fixed |
 | Audio | stock path plays, with audible hiss while idle; the replacement path was rejected on hardware |
 | RTC write | **unsafe — do not attempt**; root cause not established |
 | Modem | LTE registration, signal and the UI indicator work; **data/APN, SMS, calls, call audio and GNSS unverified** — details in [docs/modem.md](docs/modem.md) |
 | Offline time | system clock correct without NTP via `swclock-offset`; hardware RTC write still unsafe |
-| Camera, suspend | unverified, no claims |
+| Rear camera | S5K3L8 identified and RAW10 1280×720 capture verified. Scene exposure and application preview remain unverified |
+| Suspend | unverified |
 
 Details and the exact evidence boundary: [docs/hardware-status.md](docs/hardware-status.md).
 Safety notes before touching the device: [docs/safety.md](docs/safety.md).
@@ -50,31 +51,17 @@ MAP.md                        every working component → path, or why excluded
 LICENSES/, NOTICE.md          full licence texts and per-area scope
 ```
 
-Patch series: five `ztmetro`/`ztsettings` deltas plus one kernel delta, in
+Patch series: six userspace deltas and two kernel source deltas, documented in
 `SERIES.md` order. `SERIES.md` "One authority" says which copies are the series
 and which are historical mirrors. `patches/**/experimental/` is not part of the
 default series and is not a feature claim.
 
 ## Reproducing a build
 
-You need: git, Docker, an aarch64-capable container host (the build runs native
-aarch64, no qemu), `fastboot` on the host, and a phone already prepared with
-lk2nd. Then:
-
-1. Build the environment image from `build-environment/Dockerfile`.
-2. `sh build-environment/prepare-kernel.sh` — pinned pmaports, pinned kernel tag,
-   signature verified.
-3. Assemble an Arch Linux ARM aarch64 root, apply this layer
-   (`layer.sh apply <root>`, then `fixups.sh <root>`).
-4. Wrap the root as a RAM candidate with `repack-boot-init.py`.
-5. `fastboot boot <candidate>` — boot, never flash.
-
-This is the whole reproducible path, and it is **not** complete on its own:
-the root assembly step has no pinned package list or ArchLinuxARM tarball
-checksum, and nothing here installs to `userdata`. The exact remaining gaps are
-listed in [docs/BUILD-AND-BOOT.md](docs/BUILD-AND-BOOT.md#gaps--what-a-stranger-still-cannot-do-end-to-end).
-There is no installer, no recovery image and no rollback image in this
-repository, on purpose.
+From a fresh checkout you can prepare the pinned userspace sources, build a
+kernel package in an ARM64 container, and apply the device overlay to an
+existing root. Start with [Build and boot](docs/BUILD-AND-BOOT.md), which lists
+the commands and the inputs still needed to assemble a bootable system.
 
 Upstream revisions are pinned by URL and commit in `ATTRIBUTION.md`; those are
 the revisions the patches were made against, not a promise they still build.

@@ -1,0 +1,89 @@
+/* Rear camera probe — S5K3L8/OV13855 rear module identification (ugglite).
+ *
+ * Purpose: ONE discriminating RAM-boot step on the accepted 15feb baseline:
+ * power the rear module per pinned vendor power-seq and read the S5K3L8
+ * chip ID (0x30c8 @ reg 0x0000) through the mainline s5k2xx driver.
+ * A successful probe distinguishes S5K3L8 (id 0x30c8) from "not S5K3L8 at
+ * 0x10" (OV13855 would NAK the id read or return a different id; the s5k2xx
+ * probe then fails with "chip id mismatch" — a successful ID read is evidence that
+ * the module is powered, clocked and reachable).
+ *
+ * Verified against pinned sources (NOT copied from the 4fed-based draft):
+ *  - Driver drivers/media/i2c/s5k2xx.c @ pinned kernel (local copy
+ *    build/hardware-next/s5k2xx.c, sha256 543dc398…): supplies are exactly
+ *    { "avdd", "dvdd", "vio", "aux" } and all four are mandatory;
+ *    "clock-frequency" must equal 24000000; exactly 4 CSI-2 data lanes;
+ *    only "reset" gpio, requested GPIOD_OUT_HIGH, driven 0 in power_on.
+ *  - Vendor power-seq (pinned copy
+ *    build/ugglite-camera-sensor-research/dts-xiaomiulysse-camera-sensor-ugglite.dtsi,
+ *    eeprom0/eeprom3 + qcom,camera@0, rear = cci-master 0):
+ *    vdig(l23,1.2V) -> vana(l22,2.85V) -> vio(l6,1.8V) -> vaf(l17,2.85V)
+ *    -> MCLK 24000000 -> reset gpio36 = 1 -> standby gpio35 = 1.
+ *    cfg-val 1 for reset at power-on means the physical HIGH level = sensor
+ *    running; with the driver's GPIOD_OUT_HIGH request and
+ *    gpiod_set_value(reset,0) in power_on, Linux polarity is ACTIVE_LOW
+ *    (logical 0 -> physical HIGH = run). Same conclusion for both possible
+ *    rear modules (vendor seq is shared by s5k3l8_ohp0502 and
+ *    ov13855_f13855bd entries).
+ *  - Clock indices from pinned include/dt-bindings/clock/qcom,gcc-msm8917.h
+ *    @ 50f9719b…: GCC_CAMSS_MCLK0_CLK = 82 (0x52), MCLK0_CLK_SRC = 151
+ *    (0x97). Cross-checked numerically against the camss/cci clock lists of
+ *    the extracted 15feb DTB (every index matches the header).
+ *  - In the 15feb DTB &camss and &cci are already status "okay" and
+ *    cci i2c-bus@0 already runs at 400 kHz — no status flips needed.
+ *
+ * Explicit assumptions (declared, not hidden):
+ *  - reg = <0x10>: the sensor (not EEPROM) address is absent from all
+ *    pinned ugglite sources (vendor keeps it in userspace HAL config).
+ *    0x10 (7-bit) is the shared family convention for BOTH S5K3L8 and
+ *    OV13855, so this value does not choose between the two hypotheses;
+ *    a NAK alone does not distinguish address, power, reset or standby.
+ *  - Standby gpio35 is NOT driven by this node: s5k2xx consumes no standby
+ *    gpio and inventing a pinctrl-driven output would be an unverified
+ *    hardware action. Vendor drives standby=1 during operation; the line
+ *    state without driver control is part of what this probe observes.
+ *
+ * What this node deliberately does NOT do: no flash, no front camera, no
+ * EEPROM, no graph/remote-endpoint links (probe + chip ID need none), no
+ * module rebuild. The known s5k2xx probe defect (s5k2xx_power_on() return
+ * ignored, drivers/media/i2c/s5k2xx.c:1632) is NOT worked around here —
+ * the power-on error patch/module is owned by another executor.
+ */
+
+&cci_i2c0 {
+	/* clock-frequency = <400000> already present in the 15feb DTB. */
+
+	rear_sensor: camera@10 {
+		compatible = "samsung,s5k3l8";
+		reg = <0x10>;		/* family convention, see header note */
+		status = "okay";
+
+		avdd-supply = <&pm8917_l22>;	/* cam_vana 2.85 V */
+		dvdd-supply = <&pm8917_l23>;	/* cam_vdig 1.20 V */
+		vio-supply  = <&pm8917_l6>;	/* cam_vio  1.80 V */
+		aux-supply  = <&pm8917_l17>;	/* cam_vaf  2.85 V, VCM rail */
+
+		clocks = <&gcc GCC_CAMSS_MCLK0_CLK>;		/* gcc idx 0x52 */
+		assigned-clocks = <&gcc MCLK0_CLK_SRC>;		/* gcc idx 0x97 */
+		assigned-clock-rates = <24000000>;
+		clock-frequency = <24000000>;	/* S5K2XX_MCLK, driver-checked */
+
+		reset-gpios = <&tlmm 36 GPIO_ACTIVE_LOW>;
+		/* Polarity justified by vendor power-seq cfg-val: see header. */
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&camss_mclk0_default>;
+		/* gpio26 muxed to cam_mclk; state exists in the 15feb DTB
+		 * (camss-mclk0-default-state) but nothing references it yet. */
+
+		port {
+			sensor_out: endpoint {
+				data-lanes = <0 1 2 3>;
+				link-frequencies = /bits/ 64 <562000000>;
+				/* S5K3L8 4L 24MHz mode (s5k2xx link_freq_menu).
+				 * remote-endpoint to csiphy0 belongs to the
+				 * streaming step, not to this probe. */
+			};
+		};
+	};
+};

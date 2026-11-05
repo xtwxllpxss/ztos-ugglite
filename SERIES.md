@@ -5,10 +5,10 @@ reconstruction, and nothing was dropped for "not applying to clean upstream".
 
 ## One authority
 
-`patches/userspace/ztmetro/0001`–`0005` is the **only** series to apply. The
+`patches/userspace/ztmetro/0001`–`0006` is the **only** series to apply. The
 copies under `devices/xiaomi-ugglite/patches/` are historical mirrors kept for
 the device-layer release that already shipped them; do not apply both, or 0001,
-0002, 0003 and the haptic hunk land twice. For the kernel,
+0002, 0003 and the haptic hunk land twice. For the Wi-Fi kernel delta,
 `patches/kernel/0001` is the only source — `devices/…/wcn36xx-start-rate-0.patch`
 is its working copy, not a second patch to stack on top.
 
@@ -29,6 +29,7 @@ repository root with `patch -p1 < <file>`.
 | 0003 | `0003-ztmetro-brightness-no-frame-per-tick.patch` | `ztmetro/ztmetro.c` | no full frame per brightness tick |
 | 0004 | `0004-ztmetro-goodix-home-haptic.patch` | `ztmetro/ztmetro.c` | short haptic pulse on the Goodix Home key |
 | 0005 | `0005-ztsettings-ugglite-identity.patch` | `ztmetro/core/ztos-hw.h`, `ztmetro/settings/ztsettings.c` | ugglite hardware identity strings |
+| 0006 | `0006-ztmetro-battery-discovery.patch` | `ztmetro/ztmetro.c` | discover the battery through its power-supply type |
 
 ### The hash chain is the point
 
@@ -43,6 +44,7 @@ applying the patches in order to the pinned upstream file:
 | + 0003 | `e5fde72c97963106f5e8d71c8283368d1b758c2e5014271a70f924bf69c07655` ← **accepted source** |
 | + 0004 | `954fce92b2bb7e47a184fb92e897c6ab5b60eaee1c308cfc7e146db84207ccbd` ← **home-haptic source** |
 | 0005 | header change only, `ztmetro.c` unchanged |
+| + 0006 | `a41147d923a2309d28ee4eead5fe692dbf81f871a62f0f3d605eded0ee581852` ← **accepted battery source** |
 
 Accepted source `e5fde72c` produced the accepted, user-approved binary
 `14598ebed2f28cca393e50a0ff6ecff40f10c17aa7e9132166b191482bff40c0`
@@ -72,9 +74,8 @@ accepted tree — which is exactly what the table above reconstructs.
 
 ### Limits
 
-- 0003 is part of the accepted tree, **not** a brightness fix: the UI slider
-  still does not change the panel and the accepted binary is not evidence for
-  it. It is required to reproduce the accepted source, so it is in the series.
+- 0003 throttles redraws. The accepted smooth brightness behaviour also
+  requires the kernel-side DSI clock change documented below.
 - 0005 was accepted during bring-up per the historical status notes. On the
   pinned base `94b35c2a` it passes `patch -p1 --dry-run` with rc=0 and touches
   exactly `ztmetro/core/ztos-hw.h` and `ztmetro/settings/ztsettings.c`.
@@ -89,6 +90,7 @@ packaged from pmaports `39fe8995ea485a798ac8f1eff091b3962352e791`.
 | File | Target | Status |
 |------|--------|--------|
 | `0001-wcn36xx-dynamic-ra-start-rate.patch` | `drivers/net/wireless/ath/wcn36xx/smd.c` | measured on hardware, one line |
+| `0002-dsi-preserve-video-clocks.patch` | `drivers/gpu/drm/msm/dsi/dsi_host.c` | accepted on hardware with the matching display modules and camera boot composition |
 | `experimental/panel-otm1901a-lpm-errorpath.diff` | `drivers/gpu/drm/panel/msm89x7-generated/panel-xiaomi-ugglite-otm1901a-tm.c` | module loads; visible brightness NOT accepted |
 
 `0001` bounds, exactly as measured: WCN3620 on MSM8917/ugglite, one AP and one

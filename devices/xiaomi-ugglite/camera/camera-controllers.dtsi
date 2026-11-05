@@ -1,0 +1,11 @@
+/* Camera controller bring-up only: no sensor, EEPROM or capture pipeline.
+ * Include in the ugglite board DTS for a separate RAM candidate.
+ * The installed baseline boot is kept unchanged.
+ */
+&camss {
+	status = "okay";
+};
+
+&cci {
+	status = "okay";
+};

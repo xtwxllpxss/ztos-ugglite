@@ -1,0 +1,32 @@
+--- a/ztmetro/ztmetro.c
++++ b/ztmetro/ztmetro.c
+@@ -5177,6 +5177,29 @@
+ 			return capacity;
+ 		}
+ 	}
++	/* Other fuel gauges use their driver name, not a fixed battery name. */
++	DIR *supplies = opendir("/sys/class/power_supply");
++	struct dirent *supply;
++	while (supplies && (supply = readdir(supplies))) {
++		char path[512], type[32];
++		snprintf(path, sizeof(path), "/sys/class/power_supply/%s/type", supply->d_name);
++		FILE *f = fopen(path, "r");
++		bool battery = f && fscanf(f, "%31s", type) == 1 && strcmp(type, "Battery") == 0;
++		if (f) fclose(f);
++		if (!battery) continue;
++		snprintf(path, sizeof(path), "/sys/class/power_supply/%s/capacity", supply->d_name);
++		f = fopen(path, "r");
++		int capacity = -1;
++		if (f) {
++			if (fscanf(f, "%d", &capacity) != 1) capacity = -1;
++			fclose(f);
++		}
++		if (capacity >= 0 && capacity <= 100) {
++			closedir(supplies);
++			return capacity;
++		}
++	}
++	if (supplies) closedir(supplies);
+ 	return -1;
+ }
+ 

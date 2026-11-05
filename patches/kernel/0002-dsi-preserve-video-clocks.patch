@@ -1,0 +1,64 @@
+SPDX-License-Identifier: GPL-2.0-only
+
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -180,6 +180,7 @@
+ 	bool cphy_mode;
+ 
+ 	u32 dma_cmd_ctrl_restore;
++	bool xfer_keep_rates;
+ 
+ 	bool registered;
+ 	bool power_on;
+@@ -546,14 +547,19 @@
+ 	return ret;
+ }
+ 
+-void dsi_link_clk_disable_6g(struct msm_dsi_host *msm_host)
+-{
+-	/* Drop the performance state vote */
+-	dev_pm_opp_set_rate(&msm_host->pdev->dev, 0);
++static void dsi_link_clk_put_6g(struct msm_dsi_host *msm_host, bool drop_vote)
++{
++	if (drop_vote)
++		dev_pm_opp_set_rate(&msm_host->pdev->dev, 0);
+ 	clk_disable_unprepare(msm_host->esc_clk);
+ 	clk_disable_unprepare(msm_host->pixel_clk);
+ 	clk_disable_unprepare(msm_host->byte_intf_clk);
+ 	clk_disable_unprepare(msm_host->byte_clk);
++}
++
++void dsi_link_clk_disable_6g(struct msm_dsi_host *msm_host)
++{
++	dsi_link_clk_put_6g(msm_host, true);
+ }
+ 
+ void dsi_link_clk_disable_v2(struct msm_dsi_host *msm_host)
+@@ -2172,7 +2178,14 @@
+ 	 * mdp clock need to be enabled to receive dsi interrupt
+ 	 */
+ 	pm_runtime_get_sync(&msm_host->pdev->dev);
+-	cfg_hnd->ops->link_clk_set_rate(msm_host);
++	/* Video owns the configured rates and OPP vote until power_off.
++	 * Reprogramming the rounded PLL on each DCS command shifts the frame.
++	 * Keep extra clock references for the transfer, without retuning it.
++	 */
++	msm_host->xfer_keep_rates = cfg_hnd->major == MSM_DSI_VER_MAJOR_6G &&
++		msm_host->enabled && (msm_host->mode_flags & MIPI_DSI_MODE_VIDEO);
++	if (!msm_host->xfer_keep_rates)
++		cfg_hnd->ops->link_clk_set_rate(msm_host);
+ 	cfg_hnd->ops->link_clk_enable(msm_host);
+ 
+ 	/* TODO: vote for bus bandwidth */
+@@ -2204,7 +2217,10 @@
+ 
+ 	/* TODO: unvote for bus bandwidth */
+ 
+-	cfg_hnd->ops->link_clk_disable(msm_host);
++	if (msm_host->xfer_keep_rates)
++		dsi_link_clk_put_6g(msm_host, false);
++	else
++		cfg_hnd->ops->link_clk_disable(msm_host);
+ 	pm_runtime_put(&msm_host->pdev->dev);
+ }
+ 

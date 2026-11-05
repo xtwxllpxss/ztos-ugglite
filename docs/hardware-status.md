@@ -10,8 +10,13 @@ work.
 - **Boot.** lk2nd hands over to a host-assisted RAM candidate; kernel
   `7.1.3-msm89x7`, DTB `qcom/msm8917-xiaomi-ugglite.dtb`. Userspace reaches
   greetd and an SSH session over USB. Nothing is flashed to reach this state.
-- **Display, baseline.** The baseline image displays correctly; confirmed by the
-  device owner after the failing candidate was rolled back.
+- **Display and battery.** The owner confirmed smooth brightness adjustment
+  without frame shift on the accepted DSI video-clock build. The userspace
+  battery indicator is visible after discovery by power-supply type.
+- **Rear camera capture.** The driver verified S5K3L8 chip ID `0x30c8`. The
+  complete CSI graph delivered 1280×720 RAW10 buffers. Those buffers were
+  almost black under the trial conditions. Scene exposure, continuous
+  preview and camera application integration remain unverified.
 - **Wi-Fi.** The `wcn36xx` path associates and passes traffic in the tested
   conditions. Rate and throughput under load are not fixed; that limitation is
   part of the current state, not a pending claim.
@@ -24,17 +29,9 @@ work.
 
 ## Not accepted / broken
 
-- **Display, replacement builds.** A candidate using the accepted
-  `panel-xiaomi-ugglite-otm1901a-tm` module bound the driver and briefly reported
-  `connected / enabled / dpms=On`, then went off by itself and the owner saw a
-  black screen. It was rolled back. Driver binding is not a working display and
-  is not reported as one.
-- **Brightness from the UI.** Not working. The compositor path reaches logind and
-  the kernel backlight and writes the expected raw values (50/65/77 % →
-  128/166/196), yet the visible brightness does not change, and dragging the
-  slider stutters. A successful sysfs write is not a working slider. An earlier
-  `EACCES` on the same control was a separate issue; fixing it was never a
-  brightness fix.
+- **Historical display regression.** Earlier replacement modules produced a
+  black screen or failed to change visible brightness. Those builds were
+  rolled back. The accepted DSI video-clock build supersedes those results.
 - **Experimental panel patch.** A minimal error-path delta (restore
   `MIPI_DSI_MODE_LPM` before the DCS-write error return) loads as a module and
   changes nothing in the success path. It is published under
@@ -69,7 +66,7 @@ work.
 
 ## Unverified
 
-- Modem **data session/APN, SMS, calls, call audio and GNSS** (registration itself is listed above), camera, suspend, and anything not listed above. No claims.
+- Modem **data session/APN, SMS, calls, call audio and GNSS** (registration itself is listed above), camera preview and scene exposure, suspend, and anything not listed above. No claims.
 
 ## Evidence
 

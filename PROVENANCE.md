@@ -98,3 +98,13 @@ re-measured; here they are attributed, not asserted.
   and no such binary is shipped.
 * The rebuilt `rmtfs` hash quoted in `docs/modem.md` is copied from the delivery
   log of the accepted build, not recomputed for this repository.
+
+## Display, camera and battery milestone
+
+- Userspace 0006 copies the accepted battery discovery delta against the pinned
+  ztOS source under the same userspace patch terms as 0001–0005.
+- Kernel 0002 copies the DSI video-clock delta under GPL-2.0-only.
+- The camera directory carries device-tree fragments from the accepted camera
+  graph work. It contains source and binding notes only.
+- The source preparation script archives the pinned upstream and applies the
+  public series. It does not redistribute upstream binaries.

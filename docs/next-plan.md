@@ -1,5 +1,11 @@
 # Next work plan, in priority order
 
+> Historical plan from before the accepted DSI video-clock build and S5K3L8
+> RAW10 capture. For the current acceptance boundary, see
+> [hardware status](hardware-status.md). The next camera step is to establish
+> scene exposure and preview. End-to-end system build gaps are tracked in
+> [Build and boot](BUILD-AND-BOOT.md).
+
 This is a work-ordering document, not a status claim. Nothing here is accepted
 until the acceptance evidence named for it exists. Each item states why it is
 where it is, what one next step is, and what would count as done.

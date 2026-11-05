@@ -1,0 +1,79 @@
+/* Rear camera CSI-2 graph — S5K3L8 -> CSIPHY0 -> (CSID0) on ugglite.
+ *
+ * Scope: an incremental DT fragment applied on top of the ACCEPTED baseline
+ * boot image build/hermes-sensor-candidate/image/ugglite-rear-probe-dt-boot.img
+ * (sha256 1d443c8c0894a5bdfd337a9a19dba142dbbf146543418a28fad87e2aeaf15769).
+ * The probe node (rails, MCLK, reset, sensor address) already exists there and
+ * is NOT redefined here; this fragment adds only the media graph endpoints.
+ *
+ * Binding facts this fragment rests on (pinned kernel 50f9719b10cef7924…,
+ * local copies in build/hardware-next/ and build/hermes-camera-stream/refs/):
+ *
+ *  1. camss.c:4700-4750 camss_parse_endpoint_node()
+ *       - iterates the CAMSS node's own ports; vep.base.port selects the
+ *         CSIPHY instance (port@0 -> csiphy0);
+ *       - reads data-lanes (num_data_lanes, per-lane position) and
+ *         clock-lanes (clock_lane) from that endpoint;
+ *       - rejects any bus type other than V4L2_MBUS_CSI2_DPHY.
+ *     There is no DT node for CSID/ISPIF/VFE: camss_register_entities() creates
+ *     those links in software (csid_link_setup() copies lane_cfg from the
+ *     CSIPHY subdevice, camss-csid.c:1256-1280, and builds the CSID lane
+ *     assignment from the same data-lane positions, camss-csid.c:1223-1231).
+ *     Therefore exactly one endpoint pair is needed: sensor <-> csiphy0.
+ *     Adding csid/ispif/vfe nodes in DT would invent nodes the driver does not
+ *     look for.
+ *
+ *  2. v4l2-fwnode.c:209-249 (__v4l2_fwnode_endpoint_parse)
+ *       - bus-type is optional: with data-lanes present and the media bus type
+ *         unknown, the parser sets V4L2_MBUS_CSI2_DPHY itself (line 229-239),
+ *         so camss accepts the endpoint without a bus-type property;
+ *         the s5k2xx driver in turn presets .bus_type = CSI2_DPHY explicitly
+ *         (s5k2xx.c:1517-1520) and only validates num_data_lanes.
+ *       - clock-lanes = <7> follows the settled upstream Qualcomm convention
+ *         for CSIPHY endpoints (pinned tree example: sm8250 xiaomi-pipa patch,
+ *         csiphy1_ep with clock-lanes = <7>, data-lanes = <0 1 2 3>). The value
+ *         lies outside the data-lane bit range 0..3, so the copybook parser
+ *         sees no duplicate lane: with clock-lanes absent it would silently
+ *         keep clock_lane = 0, colliding with data lane 0.
+ *       - physical meaning on msm8917: both csiphy hw_ops variants
+ *         (csiphy_get_lane_mask, camss-csiphy-3ph-1-0.c:994 / -2ph-1-0.c:30)
+ *         build the lane-enable mask from data-lane positions plus a FIXED
+ *         clock-lane enable bit; lane_cfg.clk.pos is parsed and stored
+ *         (camss.c:4733) but never consumed for this SoC. So clock-lanes
+ *         documents the link, it does not re-route hardware.
+ *
+ *  3. data-lanes = <0 1 2 3> is not a guess about board wiring:
+ *       - s5k2xx.c:19  S5K2XX_DATA_LANES = 4, and s5k2xx_check_hwcfg()
+ *         (s5k2xx.c:1512-1552) refuses the device unless the endpoint declares
+ *         exactly 4 data lanes;
+ *       - the sensor is a 4-lane part in both S5K3L8 driver modes
+ *         (s5k3l8_modes[]: 4208x3120@30 and 1280x720@120, both 562 MHz link
+ *         frequency -> pixel_rate = 562e6*2*4 = 4.496 Gbps);
+ *       - lane position 0..3 with lane 0 as the first data lane is the
+ *         mainline default when positions are not remapped; no pinned vendor
+ *         source for ugglite states a swapped polarity or lane order
+ *         (vendor dtsi carries camera power/CCI only, camera HAL holds the
+ *         rest). A physical swap is therefore NOT claimed here: if the module
+ *         really swaps lanes the symptom is a corrupted/failed first frame,
+ *         which is exactly what one bounded capture distinguishes.
+ *       - clock-lanes = <7> likewise claims nothing about physical clock lane
+ *         routing on this board; it is the parser-level "not a data lane"
+ *         marker used by every upstream Qualcomm CSI-2 node.
+ *
+ *  4. link-frequencies = <562000000> is already in the accepted DTB and is
+ *     unchanged; the driver's link_freq_menu_items[] index 0 is 562 MHz and
+ *     both S5K3L8 modes use it (s5k2xx.c:67-90, 921-947).
+ *
+ * What this fragment deliberately does NOT do: no regulator, clock, GPIO,
+ * pinctrl, panel or kernel change; no front camera; no CCI/EEPROM access; no
+ * test-pattern or capture policy (that is scripts/ugglite-capture-rear.sh).
+ *
+ * Equivalent delta applied by build/hermes-camera-stream/build-candidate.sh to
+ * the decompiled accepted DTB (which has no labels, hence explicit phandles):
+ *
+ *   &camss ports { port@0 { endpoint { clock-lanes=<7>; data-lanes=<0 1 2 3>;
+ *                                       remote-endpoint=<&rear_sensor_ep>; }; }; };
+ *   &rear_sensor port { endpoint { clock-lanes=<7>; data-lanes=<0 1 2 3>;
+ *                                  link-frequencies=<562000000>;
+ *                                  remote-endpoint=<&csiphy0_ep>; }; };
+ */
