@@ -1,0 +1,29 @@
+#!/bin/sh
+# zt-flashlight - one-shot rear torch control for ugglite (ztOS).
+# The same node the ztmetro flashlight tile writes. No daemon: every call
+# changes state and exits; "test" always restores what it found (trap).
+set -u
+LED="${TORCH_LED:-/sys/class/leds/white:torch/brightness}"
+DIR=${LED%/brightness}
+die() { echo "zt-flashlight: $*" >&2; exit 1; }
+need() {
+	[ -e "$LED" ] || die "$LED missing: DT node/leds-gpio not present in this boot"
+	[ -w "$LED" ] || die "$LED not writable by $(id -un): install 72-ugglite-torch.rules (chgrp alarm, 0664)"
+}
+restore() { printf '%s\n' "$1" > "$LED"; }
+cmd=${1:-status}
+case "$cmd" in
+on)	need; printf '1\n' > "$LED" ;;
+off)	need; printf '0\n' > "$LED" ;;
+status)	if [ -e "$LED" ]; then
+		echo "node=$LED brightness=$(cat "$LED") trigger=$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$DIR/trigger" 2>/dev/null)"
+	else
+		echo "node=$LED missing"
+	fi ;;
+test)	need; secs=${2:-5}
+	prev=$(cat "$LED" 2>/dev/null) || prev=0
+	trap 'restore "$prev"' EXIT INT TERM
+	printf '1\n' > "$LED"
+	sleep "$secs" ;;
+*)	die "usage: zt-flashlight on|off|status|test [seconds]" ;;
+esac

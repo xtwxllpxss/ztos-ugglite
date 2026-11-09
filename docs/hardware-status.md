@@ -29,9 +29,15 @@ work.
   conditions. Rate and throughput under load are not fixed; that limitation is
   part of the current state, not a pending claim.
 - **Audio.** The stock path reaches the speaker and produces sound, with audible
-  hiss while idle. That is the state today.
+  hiss while idle. That is the state today. The UCM that produces it is published
+  under `devices/xiaomi-ugglite/audio/`; its path gain (`RX1/RX2 Digital
+  Volume`, 1 dB per step, 84 = 0 dB) is written once per verb, and the owner
+  accepted 104 (+20 dB) without distortion. 120 (+36 dB) is what the published
+  file sets; 124 is the codec maximum and was not accepted.
 - **Touch keys and haptics.** Goodix navigation, the Home-key pulse and the
   settings identity strings were built, installed and accepted during bring-up.
+  The non-grabbing key mapper that feeds the physical keys into that navigation
+  is published under `devices/xiaomi-ugglite/units/`.
   The haptic pulse itself was **not** measured by feel; it was accepted on the
   owner's report that the delivered build behaves.
 
@@ -74,7 +80,7 @@ work.
 
 ## Unverified
 
-- Modem **data session/APN, SMS, calls, call audio and GNSS** (registration itself is listed above), camera preview and scene exposure, suspend, and anything not listed above. No claims.
+- Modem **data session/APN, SMS, calls, call audio and GNSS** (registration itself is listed above), camera preview and scene exposure, front-camera preview/orientation/AE, rear torch (no mainline LED node exists for it), suspend, and anything not listed above. No claims.
 
 ## Evidence
 

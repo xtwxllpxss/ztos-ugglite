@@ -1,0 +1,3 @@
+# ztmetro runs as alarm and writes the rear torch through
+# /sys/class/leds/white:torch/brightness (leds-gpio, root:root 0644 by default).
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="white:torch", RUN+="/usr/bin/chgrp alarm /sys/class/leds/%k/brightness", RUN+="/usr/bin/chmod 0664 /sys/class/leds/%k/brightness"

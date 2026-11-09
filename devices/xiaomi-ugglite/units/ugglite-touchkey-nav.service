@@ -1,0 +1,29 @@
+[Unit]
+Description=ugglite touch-key -> navigation mapper (passive, no grab)
+Documentation=file:/usr/share/doc/ugglite-touchkey-nav/REPORT.md
+# Independent of the session on purpose: the mapper is what survives a
+# compositor restart, so it must not be pulled down with it.
+After=systemd-udevd.service
+ConditionPathExists=/dev/input/event3
+ConditionPathExists=/dev/uinput
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /usr/local/lib/ugglite-touchkey-navd.py
+# fallback: if the mapper dies, restart it; the phone's keys and the on-screen
+# nav bar keep working in between because nothing is grabbed
+Restart=always
+RestartSec=1
+# a crash loop must not spin: 5 starts in 30 s -> stop trying, keys go dead
+# but harmless (physical F1/F2 still reach the session as before)
+StartLimitIntervalSec=30
+StartLimitBurst=5
+KillSignal=SIGTERM
+TimeoutStopSec=5
+OOMScoreAdjust=-200
+# no EVIOCGRAB anywhere; needs /dev/uinput and CAP_SYS_ADMIN for the keymap ioctl
+PrivateDevices=no
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target

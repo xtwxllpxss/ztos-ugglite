@@ -1,0 +1,82 @@
+{
+  "generated": "2026-11-01",
+  "note": "Pinned upstream revisions. Clones live outside version control and are named by URL + commit; nothing here is vendored. Published copy: the local lock with the host-environment block and references to unpublished local scripts removed.",
+  "clones": {
+    "ztOS": {
+      "url": "https://github.com/Zerone-Laboratories/ztOS.git",
+      "head": "94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf",
+      "shallow": true,
+      "role": "userspace source: docs/devices cards, cross-ports.json, devices/<codename> layers"
+    },
+    "ztconflo": {
+      "url": "https://github.com/Zerone-Laboratories/ztconflo.git",
+      "head": "39a9d2d1b99fbf38e8a8a66daed0300bca150e9b",
+      "shallow": true,
+      "role": "build/flash driver: validates a device.toml registry entry and drives pmbootstrap; it does not flash this phone"
+    },
+    "ztos-devices": {
+      "url": "https://github.com/Zerone-Laboratories/ztos-devices.git",
+      "head": "cb8f3444f140b880e0b7a4c761853e67a908b07d",
+      "shallow": true,
+      "role": "registry of device.toml entries (input format for ztconflo)"
+    },
+    "pmaports": {
+      "url": "https://gitlab.postmarketos.org/postmarketOS/pmaports.git",
+      "head": "39fe8995ea485a798ac8f1eff091b3962352e791",
+      "shallow": false,
+      "note": "ztOS/docs/devices/cross-ports.json names 1eb4dce28ef2d0ecc8651914bcb4972083eefb0f; that commit is NOT what is checked out here and was not used as a source of facts. One revision (HEAD above) is used for every pmOS claim.",
+      "role": "kernel, firmware, deviceinfo, lk2nd packages"
+    },
+    "lk2nd": {
+      "url": "https://github.com/msm8916-mainline/lk2nd.git",
+      "head": "fd380ac637d1af38598e3f3c5321d4c962b96315",
+      "shallow": true,
+      "sparse_checkout": [
+        "Documentation",
+        "lk2nd/device/dts/msm8952"
+      ],
+      "role": "bootloader; confirms ugglite and its DTB name"
+    }
+  },
+  "pmos_packages": {
+    "device": {
+      "name": "device-qcom-msm89x7",
+      "pkgver": "8",
+      "pkgrel": "0",
+      "path": "device/testing/device-qcom-msm89x7",
+      "covers_ugglite": "yes: modules-initfs lists panel_xiaomi_ugglite_{ili9881c_sc,otm1901a_hx,otm1901a_tm}; deviceinfo_dtb includes qcom/msm8917-*"
+    },
+    "kernel": {
+      "name": "linux-postmarketos-qcom-msm89x7",
+      "pkgver": "7.1.3",
+      "pkgrel": "1",
+      "upstream": "https://github.com/msm89x7-mainline/linux",
+      "tag": "v7.1.3-r1",
+      "arch": "aarch64"
+    },
+    "lk2nd": {
+      "name": "lk2nd",
+      "pkgver": "23.1",
+      "path": "main/lk2nd",
+      "subpackage_for_ugglite": "lk2nd-msm8952",
+      "subpackage_note": "a subpackage is only produced by building its parent package: pmbootstrap build lk2nd, and the flasher fetches lk2nd-msm8952 (patch 0003)"
+    },
+    "firmware": {
+      "name": "firmware-qcom-msm89x7",
+      "path": "device/testing/firmware-qcom-msm89x7"
+    }
+  },
+  "device": {
+    "codename": "xiaomi-ugglite",
+    "dtb": "qcom/msm8917-xiaomi-ugglite.dtb",
+    "dtb_source_of_truth": "lk2nd/device/dts/msm8952/msm8917-mtp.dts: lk2nd,dtb-files = \"msm8917-xiaomi-ugglite\"",
+    "panels": [
+      "xiaomi,ugglite-otm1901a-tm",
+      "xiaomi,ugglite-ili9881c-sc",
+      "xiaomi,ugglite-otm1901a-hx"
+    ],
+    "flash_method": "fastboot",
+    "rootfs_target": null,
+    "rootfs_target_reason": "carrier not chosen; device.toml deliberately leaves [boot].rootfs_target unset"
+  }
+}

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Front camera
+Comment=Selfie camera (S5K5E8), 640x480 through csiphy1/csid1/ispif1/vfe0_rdi1
+Exec=ugglite-front-preview
+Icon=ztcamera
+Terminal=false
+Categories=Graphics;Photography;
+Keywords=selfie;front;camera;
+StartupNotify=false

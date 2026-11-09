@@ -40,7 +40,9 @@ devices/xiaomi-ugglite/
   overlay/                    files copied over the assembled root
   patches/                    patch series, see SERIES.md
   camera/                     rear CSI/DT fragments
-  front-camera/               S5K5E8 out-of-tree driver + booted DT delta
+  front-camera/               S5K5E8 out-of-tree driver, install kit, DT delta
+  audio/                      UCM (HiFi.conf) for the qdsp6 speaker/headphone path
+  units/                      touch-key nav mapper, torch helper + udev rule
 build-environment/
   Dockerfile                  native aarch64 Arch Linux ARM build image
   prepare-kernel.sh           kernel build in a separate container, pinned pmaports
@@ -65,8 +67,9 @@ kernel package in an ARM64 container, and apply the device overlay to an
 existing root. Start with [Build and boot](docs/BUILD-AND-BOOT.md), which lists
 the commands and the inputs still needed to assemble a bootable system.
 
-Upstream revisions are pinned by URL and commit in `ATTRIBUTION.md`; those are
-the revisions the patches were made against, not a promise they still build.
+Upstream revisions are pinned by URL and commit in `ATTRIBUTION.md` and
+`upstream-lock.json` (the machine-readable form); those are the revisions the
+patches were made against, not a promise they still build.
 
 ## Scope of this publication
 

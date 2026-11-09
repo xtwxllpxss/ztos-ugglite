@@ -114,3 +114,17 @@ re-measured; here they are attributed, not asserted.
   decompiled delta, not a decompiled dump.
 - The source preparation script archives the pinned upstream and applies the
   public series. It does not redistribute upstream binaries.
+- `devices/xiaomi-ugglite/audio/` — UCM written for this device from the working
+  mixer state; GPL-3.0-or-later like the rest of the device layer. It contains
+  control names and values, no upstream text.
+- `devices/xiaomi-ugglite/units/ugglite-touchkey-navd.py` and
+  `ugglite-touchkey-nav.service` — original work, GPL-3.0-or-later.
+- `devices/xiaomi-ugglite/units/zt-flashlight` and `72-ugglite-torch.rules` —
+  original work, GPL-3.0-or-later.
+- `devices/xiaomi-ugglite/front-camera/{install,rollback}-front-camera.sh`,
+  `ugglite-front-preview`, `ugglite-front-camera.desktop` — original work,
+  GPL-3.0-or-later. They carry no host path and no device identifier; the
+  module hash they check is the build published in this directory's source.
+- `upstream-lock.json` — a publication copy of the project's own lock: the
+  host-environment block and the references to unpublished local scripts were
+  removed. Commit hashes and URLs are facts, not upstream files.

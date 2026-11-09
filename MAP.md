@@ -70,3 +70,29 @@ both double-applies 0001–0003 and the haptic hunk. `SERIES.md` states this fir
 | CSI controller, sensor and endpoint sources | `devices/xiaomi-ugglite/camera/` |
 | Front S5K5E8 V4L2 subdev + booted DT delta | `devices/xiaomi-ugglite/front-camera/` |
 | Front-camera status boundary | `devices/…/front-camera/README.md`, `docs/hardware-status.md` |
+
+## Userspace integration now published
+
+| Component | Public path | Notes |
+|---|---|---|
+| Front-camera install kit | `devices/xiaomi-ugglite/front-camera/{install,rollback}-front-camera.sh`, `ugglite-front-preview`, `ugglite-front-camera.desktop` | **new**; installs the module with an sha256/vermagic gate, writes `modules-load.d`, helper resolves the video node from the media topology. The module binary is not shipped |
+| Audio UCM | `devices/xiaomi-ugglite/audio/HiFi.conf`, `xiaomi-ugg.conf` | **new**; the stock-path verb/devices, gain contract and mixer-vs-sink scale in `audio/README.md` |
+| Touch-key nav mapper | `devices/xiaomi-ugglite/units/ugglite-touchkey-navd.py`, `ugglite-touchkey-nav.service` | **new**; physical Goodix keys → nav codes, non-grabbing, short/long decided by ztmetro. Not the same layer as `patches/userspace/ztmetro/0001` |
+| Torch helper + udev rule | `devices/xiaomi-ugglite/units/zt-flashlight`, `72-ugglite-torch.rules` | **new**; needs a `white:torch` LED node that is **not** published (board DT change), and says so at runtime |
+| Machine-readable pins | `upstream-lock.json` | **new**; the local lock without the host block and unpublished script references |
+
+## Still missing for an end-to-end build
+
+These are the same gaps `docs/BUILD-AND-BOOT.md` lists; nothing here substitutes
+for them:
+
+1. **rootfs assembler** — the Arch Linux ARM tarball revision, package list and
+   checksum are not pinned; `layer.sh` still needs a pre-existing root.
+2. **boot image assembly** — no mkbootimg/initramfs composition; `repack-boot-init.py`
+   only replaces `init` inside an image that someone else built.
+3. **DT composition** — the board DTS lives in the kernel tree; the fragments here
+   are deltas, not a complete DTS, and `front-stream.dtsi` was never compiled.
+4. **package manifest** — no pinned package set/versions for the root, no
+   reproducible `pacman -Q` baseline.
+5. **kernel patch application** — `prepare-kernel.sh` builds the pmaports kernel
+   without `patches/kernel/0001`–`0002`; applying them is a manual step today.

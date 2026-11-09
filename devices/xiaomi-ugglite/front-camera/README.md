@@ -47,6 +47,44 @@ not exist. Mitigation is early module autoload in userspace
 (`/etc/modules-load.d/ugglite-front-camera.conf` in the local delivery), not a
 different DT.
 
+## Installation on the phone
+
+The module binary is **not** published; build it from `s5k5e8.c` against the
+pinned kernel, then run on the phone as root:
+
+```sh
+sh install-front-camera.sh     # module + autoload + helper + desktop entry
+sh rollback-front-camera.sh    # reverses all of it
+```
+
+`install-front-camera.sh` refuses to change anything unless the module's
+sha256 and vermagic match the proven build, backs up a different existing
+`.../media/i2c/s5k5e8.ko` as `*.bak-ugglite-front`, runs `depmod`, writes
+`/etc/modules-load.d/ugglite-front-camera.conf` (so systemd-modules-load loads
+it before the GUI), and installs `ugglite-front-preview` to `/usr/local/bin`
+plus the desktop entry to `/usr/local/share/applications`. It never touches
+`/boot`, the kernel, the ramdisk, the DT or the rear driver. Rollback removes
+the autoload, helper, entry and module, but does **not** `rmmod` a live sensor:
+the CAMSS notifier already completed and unbinding is unsafe — rollback takes
+effect on the next boot.
+
+Autoload is not cosmetic. CAMSS has one v4l2-async notifier, and its
+`complete()` — which creates every sensor→csiphy link and registers the video
+nodes — runs only after *all* sensors in the DT have bound. Without `s5k5e8`
+the rear graph is not built either.
+
+The helper configures exactly the route proven on the device and restores what
+it changed on exit:
+
+```
+s5k5e8 -> csiphy1 -> csid1 -> ispif1 -> vfe0_rdi1
+```
+
+`--capture FILE` writes one 640x480 `pgAA` RAW10 frame, exactly 384000 bytes
+(640 * 480 * 10 / 8), which is the cheap end-to-end check: a short read means
+the route is wrong, not that the sensor is dead. VFE1 is never touched —
+`msm_vfe1_rdi0` STREAMON returns `-EINVAL` on this board.
+
 ## Build
 
 ```sh

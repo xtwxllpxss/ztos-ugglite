@@ -1,0 +1,236 @@
+#!/bin/sh
+# Front camera (Samsung S5K5E8) preview/capture on Xiaomi Redmi Note 5A (ugglite).
+#
+# Configures exactly the route proven on the device on 2026-11-09 13:40:
+#   s5k5e8 -> msm_csiphy1 -> msm_csid1 -> msm_ispif1 -> msm_vfe0_rdi1
+# The RDI1 video node is /dev/video1 in that boot, but it is resolved from the
+# media topology (msm_vfe0_video1) instead of being hardcoded.
+#
+# VFE1 is never touched: on this board msm_vfe1_rdi0 STREAMON returns -EINVAL
+# ("Failed to enable vfe outputs"). Only msm_vfe0_* appears below.
+#
+# The sensor link s5k5e8:0 -> msm_csiphy1:0 is created by CAMSS as
+# [ENABLED,IMMUTABLE] when the async notifier completes; it is not modified.
+#
+# Everything else is saved before it is changed and restored on exit:
+#   - the three dynamic links (csiphy1->csid1, csid1->ispif1, ispif1->vfe0_rdi1)
+#   - every pad format on the route, and the video node format
+#   - sensor exposure (only if this helper ever changes it; it does not)
+#   - CSID1 test generator (must already be 0 to proceed)
+#
+# Usage:
+#   ugglite-front-preview                # live preview in ztcamera
+#   ugglite-front-preview --capture FILE # one 640x480 pgAA RAW10 frame
+#   ugglite-front-preview --help
+#
+# Exit status: 0 success; 1 setup/capture/cleanup failure; 2 usage.
+set -eu
+
+media=/dev/media0
+out=${UGGLITE_FRONT_OUT:-${XDG_RUNTIME_DIR:-/tmp}/ugglite-front-preview-$(id -u)}
+fmt='SGRBG10_1X10/640x480 field:none'
+width=640
+height=480
+expected=$((width * height * 10 / 8))   # 384000 bytes, proven on the device
+capture=
+
+# ---- arguments --------------------------------------------------------------
+usage() {
+    sed -n '2,/^set -eu$/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+}
+case "${1:-}" in
+    '') ;;
+    --capture)
+        [ "$#" -eq 2 ] || { usage >&2; exit 2; }
+        capture=$2
+        ;;
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    *)
+        usage >&2
+        exit 2
+        ;;
+esac
+
+mkdir -p "$out"
+say() { echo "ugglite-front-preview: $*"; }
+log=$out/run.log
+: > "$log"
+{
+    echo "== $(date -u +%FT%TZ) $*"
+    echo "kernel: $(uname -r)"
+} >> "$log" 2>&1
+
+need() {
+    command -v "$1" >/dev/null 2>&1 || { say "missing tool: $1"; exit 1; }
+}
+need media-ctl
+need v4l2-ctl
+
+[ -e "$media" ] || { say "no $media: CAMSS not bound (front DT and s5k5e8 module missing?)"; exit 1; }
+
+# ---- 1. topology and the sensor entity --------------------------------------
+media-ctl -d "$media" -p > "$out/topology-before.txt" 2>>"$log" || {
+    say "cannot read media topology"; exit 1;
+}
+sensor=$(awk '
+    /^- entity [0-9]+:/ {
+        name=$0
+        sub(/^- entity [0-9]+: /, "", name)
+        sub(/ \(.*/, "", name)
+    }
+    /-> "msm_csiphy1":0 / { print name; exit }
+' "$out/topology-before.txt")
+[ -n "$sensor" ] || {
+    say "no sensor linked to msm_csiphy1; front DT node or s5k5e8 module is not bound"
+    exit 1
+}
+say "sensor entity: $sensor"
+grep -Fq -- '-> "msm_csiphy1":0 [ENABLED,IMMUTABLE]' "$out/topology-before.txt" || {
+    say "unexpected sensor->csiphy1 link flags; no changes made"
+    exit 1
+}
+
+# The route must exist as entities; otherwise stop before changing anything.
+for ent in msm_csiphy1 msm_csid1 msm_ispif1 msm_vfe0_rdi1; do
+    media-ctl -d "$media" -e "$ent" >/dev/null 2>>"$log" || {
+        say "missing media entity $ent; this is not the proven csiphy1 route"
+        exit 1
+    }
+done
+if media-ctl -d "$media" -e msm_vfe1_rdi0 >/dev/null 2>>"$log"; then
+    say "note: msm_vfe1 exists but is not used (its STREAMON is -EINVAL on this board)"
+fi
+
+video=$(media-ctl -d "$media" -e msm_vfe0_video1 2>>"$log") || {
+    say "cannot resolve msm_vfe0_video1; CAMSS video nodes are missing (async notifier incomplete?)"
+    exit 1
+}
+say "capture node: $video"
+
+# ---- 2. refuse to displace an active configuration --------------------------
+v4l2-ctl -d "$(media-ctl -d "$media" -e msm_csid1)" --get-ctrl=test_pattern \
+    > "$out/pattern-before.txt" 2>>"$log" || { say "cannot read CSID1 test generator"; exit 1; }
+grep -Eq '^test_pattern: 0([[:space:]]|$)' "$out/pattern-before.txt" || {
+    say "CSID1 test generator is active; no changes made"
+    exit 1
+}
+if grep -E -- '-> "msm_(csid1|ispif1|vfe0_rdi1)":0 \[ENABLED' "$out/topology-before.txt"; then
+    say "front pipeline already has enabled links; no changes made"
+    exit 1
+fi
+
+# ---- 3. save pad formats and the video format --------------------------------
+cat > "$out/pads.txt" <<EOF
+$sensor:0
+msm_csiphy1:0
+msm_csiphy1:1
+msm_csid1:0
+msm_csid1:1
+msm_ispif1:0
+msm_ispif1:1
+msm_vfe0_rdi1:0
+EOF
+save_pad() {
+    entity=${1%:*}; index=${1##*:}
+    file="$out/pad-$(echo "$1" | tr ':/' '__').txt"
+    media-ctl -d "$media" --get-v4l2 "\"$entity\":$index" > "$file.raw" 2>>"$log"
+    awk '{ for (i=1; i<=NF; i++) {
+        if ($i ~ /^fmt:/) fmt=$i
+        if ($i ~ /^field:/) field=$i
+    }} END {
+        gsub(/\]/, "", field)
+        if (fmt != "" && field != "") printf "[%s %s]\n", fmt, field
+    }' "$file.raw" > "$file"
+    [ -s "$file" ]
+}
+while IFS= read -r pad; do
+    save_pad "$pad" || { say "cannot save format of $pad; no changes made"; exit 1; }
+done < "$out/pads.txt"
+
+v4l2-ctl -d "$video" --get-fmt-video > "$out/video-format-before.txt" 2>>"$log" || {
+    say "cannot save capture format; no changes made"; exit 1
+}
+old_size=$(sed -n 's/.*Width\/Height[[:space:]]*:[[:space:]]*\([0-9]*\)\/\([0-9]*\).*/width=\1,height=\2/p' "$out/video-format-before.txt")
+old_fourcc=$(sed -n "s/.*Pixel Format[[:space:]]*:[[:space:]]*'\([^']*\)'.*/\1/p" "$out/video-format-before.txt")
+[ -n "$old_size" ] && [ -n "$old_fourcc" ] || { say "cannot save capture format; no changes made"; exit 1; }
+
+sensor_dev=$(media-ctl -d "$media" -e "$sensor" 2>>"$log") || { say "cannot resolve sensor device"; exit 1; }
+old_exposure=$(v4l2-ctl -d "$sensor_dev" --get-ctrl=exposure 2>>"$log" | sed -n 's/^exposure: //p')
+case "$old_exposure" in ''|*[!0-9]*) say "cannot save sensor exposure"; exit 1 ;; esac
+
+# ---- 4. cleanup (installed before the first change) -------------------------
+cleanup() {
+    set +e
+    rc=0
+    media-ctl -d "$media" -l '"msm_ispif1":1 -> "msm_vfe0_rdi1":0 [0]' >>"$log" 2>&1 || rc=1
+    media-ctl -d "$media" -l '"msm_csid1":1 -> "msm_ispif1":0 [0]' >>"$log" 2>&1 || rc=1
+    media-ctl -d "$media" -l '"msm_csiphy1":1 -> "msm_csid1":0 [0]' >>"$log" 2>&1 || rc=1
+    while IFS= read -r pad; do
+        entity=${pad%:*}; index=${pad##*:}
+        file="$out/pad-$(echo "$pad" | tr ':/' '__').txt"
+        media-ctl -d "$media" -V "\"$entity\":$index $(cat "$file")" >>"$log" 2>&1 || rc=1
+    done < "$out/pads.txt"
+    v4l2-ctl -d "$sensor_dev" --set-ctrl="exposure=$old_exposure" >>"$log" 2>&1 || rc=1
+    v4l2-ctl -d "$video" --set-fmt-video="$old_size,pixelformat=$old_fourcc" >>"$log" 2>&1 || rc=1
+    v4l2-ctl -d "$(media-ctl -d "$media" -e msm_csid1)" --set-ctrl=test_pattern=0 >>"$log" 2>&1 || rc=1
+    media-ctl -d "$media" -p > "$out/topology-after.txt" >>"$log" 2>&1 || rc=1
+    if [ "$rc" -eq 0 ]; then
+        say "cleanup: ok (links, pad formats, video format, test generator restored)"
+    else
+        say "cleanup: FAILED - inspect $out; device state may be partially configured"
+    fi
+    return "$rc"
+}
+trap 'rc=$?; cleft=0; cleanup || cleft=1; say "RESULT: exit_rc=$rc cleanup_rc=$cleft"; [ "$rc" -eq 0 ] && [ "$cleft" -eq 0 ] && exit 0; exit 1' EXIT
+trap 'exit 130' INT TERM HUP
+
+# ---- 5. 640x480 mode, the proven route --------------------------------------
+say "setting $sensor to $width x $height (SGRBG10, mode 5 of 5)"
+media-ctl -d "$media" -V "\"$sensor\":0 [fmt:$fmt]" >>"$log" 2>&1
+media-ctl -d "$media" -V "\"msm_csiphy1\":0 [fmt:$fmt]" >>"$log" 2>&1
+media-ctl -d "$media" -V "\"msm_csiphy1\":1 [fmt:$fmt]" >>"$log" 2>&1
+# CSID1 refuses a CSIPHY1 without a sensor configuration, so this order matters.
+media-ctl -d "$media" -l '"msm_csiphy1":1 -> "msm_csid1":0 [1]' >>"$log" 2>&1
+for pad in 'msm_csid1:0' 'msm_csid1:1' 'msm_ispif1:0' 'msm_ispif1:1' 'msm_vfe0_rdi1:0'; do
+    entity=${pad%:*}; index=${pad##*:}
+    media-ctl -d "$media" -V "\"$entity\":$index [fmt:$fmt]" >>"$log" 2>&1
+done
+# SGRBG10_1X10 -> V4L2_PIX_FMT_SGRBG10P ('pgAA') in camss-vfe formats_rdi_8x16[].
+v4l2-ctl -d "$video" --set-fmt-video=width=$width,height=$height,pixelformat=pgAA >>"$log" 2>&1
+v4l2-ctl -d "$video" --get-fmt-video > "$out/video-format-capture.txt" 2>>"$log"
+media-ctl -d "$media" -l '"msm_csid1":1 -> "msm_ispif1":0 [1]' >>"$log" 2>&1
+media-ctl -d "$media" -l '"msm_ispif1":1 -> "msm_vfe0_rdi1":0 [1]' >>"$log" 2>&1
+media-ctl -d "$media" -p > "$out/topology-capture.txt" 2>>"$log"
+
+# ---- 6. capture or preview --------------------------------------------------
+if [ -n "$capture" ]; then
+    say "capturing one frame to $capture (expect $expected bytes)"
+    rm -f -- "$capture"
+    set +e
+    timeout -k 3 15 v4l2-ctl -d "$video" --stream-mmap=3 --stream-count=1 \
+        --stream-to="$capture" >>"$log" 2>&1
+    cap_rc=$?
+    set -e
+    [ "$cap_rc" -eq 0 ] || { say "v4l2-ctl exited $cap_rc"; exit 1; }
+    got=$(wc -c < "$capture" | tr -d ' ')
+    [ "$got" -eq "$expected" ] || {
+        say "capture is $got bytes, expected $expected"
+        exit 1
+    }
+    say "captured $got bytes (640x480 pgAA)"
+    exit 0
+fi
+
+[ -x /usr/local/libexec/ztcamera-ugglite ] || {
+    say "missing /usr/local/libexec/ztcamera-ugglite (ztCamera not installed)"; exit 1
+}
+say "starting ztCamera on $video; close the window or Ctrl-C to restore the graph"
+set +e
+/usr/local/libexec/ztcamera-ugglite --device "$video"
+app_rc=$?
+set -e
+say "ztCamera exited $app_rc"
+exit "$app_rc"
