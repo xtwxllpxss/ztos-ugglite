@@ -106,5 +106,11 @@ re-measured; here they are attributed, not asserted.
 - Kernel 0002 copies the DSI video-clock delta under GPL-2.0-only.
 - The camera directory carries device-tree fragments from the accepted camera
   graph work. It contains source and binding notes only.
+- `devices/xiaomi-ugglite/front-camera/` — original GPL-2.0-only driver code
+  written for this device. `s5k5e8_modes.h` holds functional register values
+  extracted from the stock `libmmcamera_s5k5e8_*_d6.so` for interoperability;
+  no code or data structure from that binary is redistributed beyond those
+  register settings, and `front-stream.dtsi` is a restatement of a booted
+  decompiled delta, not a decompiled dump.
 - The source preparation script archives the pinned upstream and applies the
   public series. It does not redistribute upstream binaries.

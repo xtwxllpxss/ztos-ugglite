@@ -1,0 +1,70 @@
+/* Front camera stream graph — S5K5E8 on ugglite (reference fragment).
+ *
+ * This restates the DT delta that was actually booted. The accepted baseline
+ * DTB was decompiled to `front-id.dts`, edited into `front-stream.dts` and
+ * repacked; that image (sha256 11a41985…) ran on the phone with the
+ * out-of-tree driver, which read chip ID 0x5e80 and bound both CSI links.
+ * The decompiled tree carries no labels, so the original delta used literal
+ * phandles (0x1002 / 0x1003). Here the same three changes are written against
+ * the pinned board DTS labels. **It has not been compiled** against the pinned
+ * kernel tree; it is the readable form of a proven delta, not a build claim.
+ *
+ * Three changes only, relative to the accepted baseline:
+ *   1. camera@2d compatible: "samsung,s5k5e8-id-probe" -> "samsung,s5k5e8"
+ *      (the probe stub was used for the earlier chip-ID-only candidate);
+ *   2. camera@2d gets a port/endpoint: 2 data lanes, clock-lane marker 7,
+ *      link frequency 418 MHz, remote-endpoint to csiphy1;
+ *   3. &camss ports gets port@1 (csiphy1) with the matching endpoint.
+ *
+ * Rail/GPIO/clock values are the vendor power sequence: L22 2.85 V (avana),
+ * L23 1.20 V (vdig), L6 1.80 V (vio), MCLK1 24 MHz, reset GPIO40,
+ * standby GPIO39, both ACTIVE_LOW by the same cfg-val reasoning as the rear
+ * probe (see ../camera/camera-rear-probe.dtsi).
+ *
+ * 418 MHz is derived from the HAL op_pixel_clk, not measured.
+ * clock-lanes = <7> is the Qualcomm parser convention, not a lane remap.
+ */
+
+&cci_i2c1 {
+	/* i2c-bus@1 already runs at 400 kHz in the accepted baseline DTB. */
+
+	front_sensor: camera@2d {
+		compatible = "samsung,s5k5e8";
+		reg = <0x2d>;
+
+		avdd-supply = <&pm8917_l22>;	/* cam_vana 2.85 V */
+		dvdd-supply = <&pm8917_l23>;	/* cam_vdig 1.20 V */
+		vio-supply  = <&pm8917_l6>;	/* cam_vio  1.80 V */
+
+		clocks = <&gcc GCC_CAMSS_MCLK1_CLK>;
+		assigned-clocks = <&gcc MCLK1_CLK_SRC>;
+		assigned-clock-rates = <24000000>;
+
+		reset-gpios = <&tlmm 40 GPIO_ACTIVE_LOW>;
+		standby-gpios = <&tlmm 39 GPIO_ACTIVE_LOW>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&camss_mclk1_default>;
+
+		port {
+			front_sensor_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1>;
+				link-frequencies = /bits/ 64 <418000000>;
+				remote-endpoint = <&csiphy1_ep>;
+			};
+		};
+	};
+};
+
+&camss {
+	ports {
+		port@1 {
+			csiphy1_ep: endpoint {
+				clock-lanes = <7>;
+				data-lanes = <0 1>;
+				remote-endpoint = <&front_sensor_ep>;
+			};
+		};
+	};
+};

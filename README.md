@@ -39,6 +39,8 @@ devices/xiaomi-ugglite/
   packages.txt                extra packages for the assembled root
   overlay/                    files copied over the assembled root
   patches/                    patch series, see SERIES.md
+  camera/                     rear CSI/DT fragments
+  front-camera/               S5K5E8 out-of-tree driver + booted DT delta
 build-environment/
   Dockerfile                  native aarch64 Arch Linux ARM build image
   prepare-kernel.sh           kernel build in a separate container, pinned pmaports

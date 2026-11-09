@@ -17,6 +17,14 @@ work.
   complete CSI graph delivered 1280×720 RAW10 buffers. Those buffers were
   almost black under the trial conditions. Scene exposure, continuous
   preview and camera application integration remain unverified.
+- **Front camera identification.** The out-of-tree S5K5E8 driver
+  ([devices/…/front-camera/](../devices/xiaomi-ugglite/front-camera/)) loaded
+  against the accepted kernel, read chip ID `0x5e80` over CCI1, and CAMSS bound
+  both sensors (`s5k3l8 → csiphy0`, `s5k5e8 → csiphy1`, links enabled). A
+  640×480 SGRBG10 capture produced exactly 384000 bytes and cleaned up. This is
+  identification plus one unbuffered capture, not front-camera support: preview,
+  orientation, AE and the larger modes are untested, and the front node
+  necessarily delays the rear graph because CAMSS has a single async notifier.
 - **Wi-Fi.** The `wcn36xx` path associates and passes traffic in the tested
   conditions. Rate and throughput under load are not fixed; that limitation is
   part of the current state, not a pending claim.

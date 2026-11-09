@@ -40,8 +40,10 @@ source root, so `ztmetro/ztmetro.c` means `<ztOS>/ztmetro/ztmetro.c`.
 | `ztsettings-config-dir-mkdir.patch` | `ztmetro/settings/ztsettings.c` | built and installed; visible effect not separately accepted |
 | `ugglite-wifi-bars.patch` | `ztmetro/ztmetro.c` | built and installed; Wi-Fi remains limited |
 
-One kernel patch is included at `patches/kernel/0001-wcn36xx-dynamic-ra-start-rate.patch`
-(GPL-2.0-only, one line; measured bounds in `SERIES.md`). The kernel tree
+Two kernel patches are included: `patches/kernel/0001-wcn36xx-dynamic-ra-start-rate.patch`
+(one line; measured bounds in `SERIES.md`) and
+`patches/kernel/0002-dsi-preserve-video-clocks.patch` (DSI video clocks, part
+of the accepted brightness behaviour). Both are GPL-2.0-only. The kernel tree
 itself, the panel experiment and the RTC patch are not published — `SERIES.md`
 and `MAP.md` state the reason for each.
 
@@ -53,8 +55,16 @@ and `MAP.md` state the reason for each.
 - Panels present in the kernel package:
   `xiaomi,ugglite-otm1901a-tm`, `xiaomi,ugglite-ili9881c-sc`,
   `xiaomi,ugglite-otm1901a-hx`. The tm variant is the one whose module bound in
-  the last hardware run; that run's visible acceptance failed (the screen stayed
-  black). Baseline rollback completed and the device owner confirmed its display
-  works; the replacement module remains rejected. "Bound" means the driver probe succeeded, not that the display
-  was seen working.
+  the accepted build; that build's brightness adjustment was confirmed by the
+  device owner without a frame shift. Earlier replacement modules produced a
+  black screen or no visible brightness change and were rolled back; those
+  results are superseded, not current. "Bound" alone still means only that the
+  driver probe succeeded.
+
+The S5K5E8 front-camera driver under `devices/xiaomi-ugglite/front-camera/` is
+original GPL-2.0-only kernel code. Its five mode tables are functional register
+values extracted from the stock
+`libmmcamera_s5k5e8_{oef0501,f5e8ybf}_d6.so` for interoperability; no code from
+that binary is included, and the extraction is stated in the directory README
+rather than implied to be vendor source.
 - Boot chain: lk2nd → mainline kernel → host-assisted RAM root.

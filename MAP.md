@@ -68,3 +68,5 @@ both double-applies 0001–0003 and the haptic hunk. `SERIES.md` states this fir
 | Accepted battery discovery | `patches/userspace/ztmetro/0006-ztmetro-battery-discovery.patch` |
 | DSI video clock preservation | `patches/kernel/0002-dsi-preserve-video-clocks.patch` |
 | CSI controller, sensor and endpoint sources | `devices/xiaomi-ugglite/camera/` |
+| Front S5K5E8 V4L2 subdev + booted DT delta | `devices/xiaomi-ugglite/front-camera/` |
+| Front-camera status boundary | `devices/…/front-camera/README.md`, `docs/hardware-status.md` |
