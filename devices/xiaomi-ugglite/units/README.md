@@ -1,9 +1,13 @@
-# Units and helpers — touch keys and torch
+# Units and helpers — touch keys
 
-Two independent userspace pieces that the ztmetro patch series does not cover.
-Neither duplicates `patches/userspace/ztmetro/`: 0001 is ztmetro's own nav
-handling, while the mapper here turns the *physical* Goodix keys into the nav
-codes ztmetro already understands.
+The non-grabbing mapper that turns the *physical* Goodix keys into the nav
+codes ztmetro already understands. It does not duplicate
+`patches/userspace/ztmetro/`: 0001 is ztmetro's own nav handling, while this
+mapper feeds it the hardware keys.
+
+The rear torch helper and its udev rule now live in
+[`../torch/`](../torch/README.md), together with the DT fragment that creates
+the node they need.
 
 ## Touch keys
 
@@ -34,23 +38,3 @@ kernels; if the touch keys stop working, check the node first.
 
 The unit's `Documentation=` points at the local delivery report, which is not
 published; this README is the public description.
-
-## Torch
-
-| File | Installed path |
-|---|---|
-| `72-ugglite-torch.rules` | `/etc/udev/rules.d/72-ugglite-torch.rules` |
-| `zt-flashlight` | `/usr/local/bin/zt-flashlight` |
-
-The rear flash is two TLMM lines (`gpio33` flash-enable, `gpio34` flash-now),
-driven in the stock firmware by a vendor LED driver that mainline does not have.
-The minimal mainline fix is a `gpio-leds` node labelled `white:torch` on
-`gpio34`, which is **not** published here: it is a board DT change that also
-needs a leds-gpio default-state decision, and it has not been through the DT
-review the other fragments got. The rule and helper below are useless until that
-node exists — `zt-flashlight status` says so instead of pretending.
-
-Given the node, `zt-flashlight on|off|status|test [seconds]` is a one-shot
-control (no daemon), and the udev rule gives the `alarm` user write access to
-`brightness` so ztmetro's tile can toggle it. `test` restores the previous
-value on exit.

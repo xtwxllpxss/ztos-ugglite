@@ -16,6 +16,9 @@ RAM boot. Read this before running anything from this repository.
 - **Do not run unverified RAM probe images.** Some diagnostic images used during
   bring-up rebooted unconditionally and could return the phone to Android in an
   unexpected state. The images themselves are not here.
+- **Do not leave the rear torch on unattended.** It is the camera flash LED,
+  not a lamp: continuous operation heats the emitter and drains the cell. Use
+  short bursts and keep an eye on the lens area.
 - **Do not put personal data into build inputs.** No network profiles, hostnames,
   SSH keys, MAC addresses, IP addresses or boot logs belong in a public fork.
 

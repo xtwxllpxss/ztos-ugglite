@@ -116,11 +116,17 @@ re-measured; here they are attributed, not asserted.
   public series. It does not redistribute upstream binaries.
 - `devices/xiaomi-ugglite/audio/` — UCM written for this device from the working
   mixer state; GPL-3.0-or-later like the rest of the device layer. It contains
-  control names and values, no upstream text.
+  control names and values, no upstream text. The capture gain
+  (`ADC1 Volume 6`) is the stock Android active value (stock boot default 4),
+  not a new measurement.
 - `devices/xiaomi-ugglite/units/ugglite-touchkey-navd.py` and
   `ugglite-touchkey-nav.service` — original work, GPL-3.0-or-later.
-- `devices/xiaomi-ugglite/units/zt-flashlight` and `72-ugglite-torch.rules` —
-  original work, GPL-3.0-or-later.
+- `devices/xiaomi-ugglite/torch/{72-ugglite-torch.rules,zt-flashlight,install-torch.sh,rollback-torch.sh}`
+  — original work, GPL-3.0-or-later. `torch.dtsi` is GPL-2.0-only like the
+  kernel tree it is included in: a readable restatement of the booted
+  decompiled DT delta. The GPIO numbers and the vendor driver's en/now
+  semantics come from the vendor DT and driver, not from upstream code copied
+  here.
 - `devices/xiaomi-ugglite/front-camera/{install,rollback}-front-camera.sh`,
   `ugglite-front-preview`, `ugglite-front-camera.desktop` — original work,
   GPL-3.0-or-later. They carry no host path and no device identifier; the

@@ -1,3 +1,4 @@
 # ztmetro runs as alarm and writes the rear torch through
-# /sys/class/leds/white:torch/brightness (leds-gpio, root:root 0644 by default).
+# /sys/class/leds/white:torch/brightness (leds-gpio on gpio34, root:root 0644
+# by default, max_brightness = 1). Same shape as 71-ugglite-backlight.rules.
 ACTION=="add", SUBSYSTEM=="leds", KERNEL=="white:torch", RUN+="/usr/bin/chgrp alarm /sys/class/leds/%k/brightness", RUN+="/usr/bin/chmod 0664 /sys/class/leds/%k/brightness"

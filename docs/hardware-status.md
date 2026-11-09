@@ -25,15 +25,25 @@ work.
   identification plus one unbuffered capture, not front-camera support: preview,
   orientation, AE and the larger modes are untested, and the front node
   necessarily delays the rear graph because CAMSS has a single async notifier.
+- **Rear torch.** A DT-only `gpio-leds` node `white:torch` on `gpio34`
+  (`gpio33` held low, `max_brightness=1`) booted in the same RAM candidate as
+  the front DT (`6995175f…`) and appeared as `/sys/class/leds/white:torch`.
+  `72-ugglite-torch.rules` makes its `brightness` `root:alarm 0664`, which is
+  the access ztmetro's flashlight tile needs. The GPIO mapping
+  (`gpio33` = flash-enable, `gpio34` = flash-now) is vendor-derived, not
+  measured; the node is a plain on/off LED, not a mainline flash driver, so
+  there is no strobe, current or duration control.
 - **Wi-Fi.** The `wcn36xx` path associates and passes traffic in the tested
   conditions. Rate and throughput under load are not fixed; that limitation is
   part of the current state, not a pending claim.
 - **Audio.** The stock path reaches the speaker and produces sound, with audible
   hiss while idle. That is the state today. The UCM that produces it is published
-  under `devices/xiaomi-ugglite/audio/`; its path gain (`RX1/RX2 Digital
+  under `devices/xiaomi-ugglite/audio/`; its playback gain (`RX1/RX2 Digital
   Volume`, 1 dB per step, 84 = 0 dB) is written once per verb, and the owner
   accepted 104 (+20 dB) without distortion. 120 (+36 dB) is what the published
-  file sets; 124 is the codec maximum and was not accepted.
+  file sets; 124 is the codec maximum and was not accepted. The same verb sets
+  `ADC1 Volume 6`, the stock Android active capture gain (stock boot default 4;
+  6 is the stock ceiling).
 - **Touch keys and haptics.** Goodix navigation, the Home-key pulse and the
   settings identity strings were built, installed and accepted during bring-up.
   The non-grabbing key mapper that feeds the physical keys into that navigation
@@ -80,7 +90,7 @@ work.
 
 ## Unverified
 
-- Modem **data session/APN, SMS, calls, call audio and GNSS** (registration itself is listed above), camera preview and scene exposure, front-camera preview/orientation/AE, rear torch (no mainline LED node exists for it), suspend, and anything not listed above. No claims.
+- Modem **data session/APN, SMS, calls, call audio and GNSS** (registration itself is listed above), camera preview and scene exposure, front-camera preview/orientation/AE, suspend, and anything not listed above. No claims.
 
 ## Evidence
 

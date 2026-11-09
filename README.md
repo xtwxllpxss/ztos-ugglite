@@ -24,6 +24,7 @@ booted from a host over USB; several core functions are unverified or broken.
 | Modem | LTE registration, signal and the UI indicator work; **data/APN, SMS, calls, call audio and GNSS unverified** — details in [docs/modem.md](docs/modem.md) |
 | Offline time | system clock correct without NTP via `swclock-offset`; hardware RTC write still unsafe |
 | Rear camera | S5K3L8 identified and RAW10 1280×720 capture verified. Scene exposure and application preview remain unverified |
+| Rear torch | works — DT-only `gpio-leds` node `white:torch` on gpio34, writable by the UI through a udev rule; `max_brightness=1`, on/off only. GPIO mapping is vendor-derived |
 | Suspend | unverified |
 
 Details and the exact evidence boundary: [docs/hardware-status.md](docs/hardware-status.md).
@@ -42,7 +43,8 @@ devices/xiaomi-ugglite/
   camera/                     rear CSI/DT fragments
   front-camera/               S5K5E8 out-of-tree driver, install kit, DT delta
   audio/                      UCM (HiFi.conf) for the qdsp6 speaker/headphone path
-  units/                      touch-key nav mapper, torch helper + udev rule
+  units/                      touch-key nav mapper and its systemd unit
+  torch/                      rear-flash DT fragment, udev rule, helper, install kit
 build-environment/
   Dockerfile                  native aarch64 Arch Linux ARM build image
   prepare-kernel.sh           kernel build in a separate container, pinned pmaports

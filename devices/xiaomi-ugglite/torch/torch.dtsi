@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/* Rear torch — ugglite gpio-leds board fragment.
+ *
+ * Readable form of the DT delta that was booted in the RAM candidate
+ * 6995175f872e8bdf5f9cc1b8126a9af50e5431425ce148a18366c12c9ad516c7
+ * (front-camera DT plus this torch block over the accepted baseline). The
+ * decompiled tree carries no labels, so the original delta used literal
+ * phandles; here the same two blocks are written against the pinned board
+ * DTS labels. It has not been compiled against that tree in this repository
+ * — it restates the booted delta, not a build claim.
+ *
+ * The stock firmware drives the rear flash with a vendor LED driver
+ * (compatible "qcom,leds-back-gpio-flash") over two TLMM lines:
+ * gpio33 = flash_en, gpio34 = flash_now. Mainline has no such driver and no
+ * node, so the LED is exposed through the stock leds-gpio driver as
+ * white:torch on gpio34. gpio33 is held low: nothing in mainline owns that
+ * line, and a floating flash_en must not open the strobe path.
+ *
+ * In the vendor driver brightness 1..200 means flash_en=0/flash_now=1
+ * (torch) and 201..255 means flash_en=1/flash_now=0 (strobe). That split
+ * does not apply here: leds-gpio registers max_brightness = 1, so the sysfs
+ * brightness is boolean and the value written by ztmetro (9) is clamped.
+ */
+
+&tlmm {
+	cam_flash_pins: cam-flash-pins {
+		pins = "gpio33", "gpio34";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		output-low;
+	};
+};
+
+/ {
+	torch-leds {
+		compatible = "gpio-leds";
+		pinctrl-0 = <&cam_flash_pins>;
+		pinctrl-names = "default";
+
+		led-0 {
+			function = LED_FUNCTION_FLASH;
+			color = <LED_COLOR_ID_WHITE>;
+			label = "white:torch";
+			gpios = <&tlmm 34 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+	};
+};

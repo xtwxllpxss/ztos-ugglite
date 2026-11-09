@@ -78,7 +78,7 @@ both double-applies 0001–0003 and the haptic hunk. `SERIES.md` states this fir
 | Front-camera install kit | `devices/xiaomi-ugglite/front-camera/{install,rollback}-front-camera.sh`, `ugglite-front-preview`, `ugglite-front-camera.desktop` | **new**; installs the module with an sha256/vermagic gate, writes `modules-load.d`, helper resolves the video node from the media topology. The module binary is not shipped |
 | Audio UCM | `devices/xiaomi-ugglite/audio/HiFi.conf`, `xiaomi-ugg.conf` | **new**; the stock-path verb/devices, gain contract and mixer-vs-sink scale in `audio/README.md` |
 | Touch-key nav mapper | `devices/xiaomi-ugglite/units/ugglite-touchkey-navd.py`, `ugglite-touchkey-nav.service` | **new**; physical Goodix keys → nav codes, non-grabbing, short/long decided by ztmetro. Not the same layer as `patches/userspace/ztmetro/0001` |
-| Torch helper + udev rule | `devices/xiaomi-ugglite/units/zt-flashlight`, `72-ugglite-torch.rules` | **new**; needs a `white:torch` LED node that is **not** published (board DT change), and says so at runtime |
+| Torch: DT fragment, helper, udev rule, install kit | `devices/xiaomi-ugglite/torch/` — `torch.dtsi`, `zt-flashlight`, `72-ugglite-torch.rules`, `install-torch.sh`, `rollback-torch.sh` | **new** in this pass; the rule and helper moved out of `units/` and now ship with the board DT fragment that creates `white:torch` on gpio34. The node was booted on the phone; the fragment restates that delta and is not a complete DTS |
 | Machine-readable pins | `upstream-lock.json` | **new**; the local lock without the host block and unpublished script references |
 
 ## Still missing for an end-to-end build
@@ -91,7 +91,8 @@ for them:
 2. **boot image assembly** — no mkbootimg/initramfs composition; `repack-boot-init.py`
    only replaces `init` inside an image that someone else built.
 3. **DT composition** — the board DTS lives in the kernel tree; the fragments here
-   are deltas, not a complete DTS, and `front-stream.dtsi` was never compiled.
+   are deltas, not a complete DTS, and `front-stream.dtsi` and `torch.dtsi` were
+   never compiled from the pinned tree.
 4. **package manifest** — no pinned package set/versions for the root, no
    reproducible `pacman -Q` baseline.
 5. **kernel patch application** — `prepare-kernel.sh` builds the pmaports kernel

@@ -33,6 +33,24 @@ The control's scale is 1 dB per step with `84` as the 0 dB reference:
 Change the two lines in `SectionVerb` to move the whole path; the per-device
 sequences do not need editing.
 
+## Capture gain
+
+The capture route (`AMIC -> CIC1 -> DEC1 (ADC1)`) is switched in the same
+`SectionVerb`, and so is its PGA: `ADC1 Volume 6`.
+
+The stock boot default is **4**; the stock Android mixer path activates **6**,
+which is also the stock ceiling. The UCM publishes the stock active value, not
+a boost beyond the vendor calibration. The TLV step is nominally 6 dB, but a
+0 -> 4 comparison made during the microphone work measured about +12 dB, so the
+effective step is closer to 3 dB and 6 is not +36 dB in practice.
+
+`TX1 Digital Volume` stays at its 84 (0 dB) default. It is post-ADC gain and
+would raise the noise floor together with the signal. `TX1 HPF` is already
+enabled at 150 Hz. Neither is written by this UCM.
+
+`SectionDevice."Mic"` carries routing and capabilities only; its per-stream
+sequence stays empty for the same reason as the playback devices.
+
 ## Mixer vs sink volume
 
 These numbers are **hardware mixer** steps. The PipeWire sink is a separate

@@ -25,6 +25,7 @@ Note 5A (`ugglite`, Qualcomm MSM8917, Adreno 308) с mainline-ядром
 | Модем | LTE-регистрация, уровень сигнала и индикатор в UI работают; **data/APN, SMS, звонки, call audio и GNSS не проверены** — [docs/modem.md](docs/modem.md) |
 | Время без сети | системные часы верны без NTP через `swclock-offset`; запись hardware RTC по-прежнему небезопасна |
 | Задняя камера | Определяется S5K3L8, получен RAW10 1280×720. Экспозиция сцены и preview приложения не приняты |
+| Задний фонарик | работает — DT-only узел `gpio-leds` `white:torch` на gpio34, доступ для UI через udev-правило; `max_brightness=1`, только on/off. Маппинг GPIO взят из вендорского DT/драйвера |
 | Suspend | не проверен |
 
 Подробности и границы доказательств: [docs/hardware-status.md](docs/hardware-status.md).
