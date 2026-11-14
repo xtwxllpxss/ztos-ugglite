@@ -99,3 +99,53 @@ which conditions) is in `SERIES.md` and `PROVENANCE.md`. Build-time `not_verifie
 lists live with each recipe in `build/`. This file deliberately does not carry
 session logs, boot identifiers or per-run sysfs values: the status is the stable
 part, the run detail is not.
+
+## Update 2026-11-15 — state after the persistent install
+
+This addendum supersedes the sections above where they conflict. It records what
+changed after the boot slot was written and the install was used daily.
+
+Verified since the previous revision:
+
+- **Persistent boot.** The boot slot carries lk2nd followed by a ztOS payload;
+  the stock boot image is backed up for rollback. Host-free reboots reach ztOS.
+  RAM candidates (`fastboot boot`) remain the way to test a kernel/DT change
+  without touching the slot.
+- **Cameras in daily use.** The device owner reports both cameras working on the
+  current firmware. Rear RAW10 1280×720 capture and the full CSI graph were
+  verified earlier; the front sensor reads chip ID `0x5e80` with both links
+  enabled. The torch works.
+- **Calls and SMS reception.** An incoming call produced the ringtone, the call
+  screen, an answer and voice in both directions; the owner accepted it. An SMS
+  receive layer imports messages into ztOS. Data off/on and autoconnect are
+  accepted.
+- **GNSS engine.** Enabling `gps-raw`/`gps-nmea` produces NMEA; a satellite was
+  received (SNR 31). No fix indoors is expected. No user-space client is
+  installed yet.
+- **Updates.** `ztos-update check` completes and reports pending packages;
+  `apply` now upgrades with a single `pacman -Syu` (an earlier version ran
+  `puacman -Su` in a separate run, which is a partial upgrade).
+
+Still not accepted, and why:
+
+- **Recording tempo.** Captured frames are fast enough (the sensor path was
+  measured at about 119 fps in 1280×720), but the userspace CPU demosaic plus a
+  15-fps pacer yields a 15-fps clip. A 720p30/24 build exists but is not accepted.
+- **Low-light exposure.** In the 1280×720 mode the driver clamps exposure to
+  1/120 s until vertical blanking is raised, so night frames are dark and noisy.
+- **Camera quality.** Colour calibration, AE/ISO, AF feel and front-preview
+  orientation/mirroring.
+- **Microphone.** The capture route is proven; gain candidates
+  (`ADC1 Volume` 6→8, `TX1 Digital Volume` 84→88) are not accepted.
+- **SMS sending.** Fails with RP cause 38. The SIM reports an FDN lock, which is
+  the leading configuration candidate; the modem/network cause is not proven.
+- **WWAN data.** A bearer comes up and addresses/routes are handed out, but
+  HTTPS probes time out. The tariff uses allow-lists, so this is not claimed
+  either way.
+- **Venus hardware video encode.** Driver and DT node are enabled, but the root
+  filesystem carries no Venus firmware, so probe fails after `-ENOENT`. Software
+  encode only.
+- **Suspend.** `deep` is not supported by the firmware (PSCI reports
+  `NOT_SUPPORTED`); only `s2idle` is available and screen-off draw is not
+  measured. An ambient-light channel does not exist, so automatic brightness is
+  not possible; auto-rotate is not wired into the shell.

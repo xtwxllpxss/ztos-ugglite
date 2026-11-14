@@ -8,24 +8,31 @@ Note 5A (`ugglite`, Qualcomm MSM8917, Adreno 308) with the mainline
 `linux-postmarketos-qcom-msm89x7` kernel and lk2nd as the first stage.
 
 Unofficial and experimental. Not a product, not an installer, not an endorsed
-ztOS or postmarketOS device. Verified state is a hand-assembled root filesystem
-booted from a host over USB; several core functions are unverified or broken.
+ztOS or postmarketOS device. Verified state is a persistent install: the boot
+slot carries lk2nd followed by a ztOS payload (the stock boot image is backed up
+for rollback) and ztOS runs from an internal ext4 root. Several core functions
+are still unverified or broken.
 
 ## Hardware status
 
 | Area | State |
 |---|---|
-| Kernel + userspace boot over USB (lk2nd → RAM candidate) | works |
+| Boot, persistent (lk2nd + ztOS boot slot) | works — host-free reboots; stock boot image backed up for rollback |
+| Boot, RAM candidates (`fastboot boot`) | works — tests a kernel/DT without touching the slot |
 | Display, baseline | works — confirmed by the device owner |
 | Display brightness | Working on the accepted RAM build with preserved DSI video clocks. The owner confirmed smooth adjustment without frame shift |
 | Wi-Fi | associates and passes traffic; rate/throughput under load not fixed |
-| Audio | stock path plays, with audible hiss while idle; the replacement path was rejected on hardware |
+| Audio | speaker playback and incoming-call audio accepted (RX1/RX2 at 104, louder without distortion); idle hiss remains. Microphone is quiet, gain candidates not accepted |
 | RTC write | **unsafe — do not attempt**; root cause not established |
-| Modem | LTE registration, signal and the UI indicator work; **data/APN, SMS, calls, call audio and GNSS unverified** — details in [docs/modem.md](docs/modem.md) |
+| Modem | LTE registration and the UI indicator work; **incoming calls and call audio are accepted**, SMS reception imports messages, data on/off and autoconnect are accepted; outgoing calls untested, SMS sending fails (RP cause 38), WWAN data unverified (tariff allow-list) — [docs/modem.md](docs/modem.md) |
+| GNSS | modem GPS engine verified (NMEA output, satellite received with SNR 31); no user-space client installed yet |
 | Offline time | system clock correct without NTP via `swclock-offset`; hardware RTC write still unsafe |
-| Rear camera | S5K3L8 identified and RAW10 1280×720 capture verified. Scene exposure and application preview remain unverified |
+| Rear camera | S5K3L8 identified and RAW10 1280×720 capture verified; owner reports the camera working. 720p30 recording, colour calibration, AE/ISO and AF feel are not accepted |
+| Front camera | S5K5E8 chip ID `0x5e80` and both CSI links verified, first frame captured; owner reports the camera working. Preview orientation/mirroring and higher modes not accepted |
 | Rear torch | works — DT-only `gpio-leds` node `white:torch` on gpio34, writable by the UI through a udev rule; `max_brightness=1`, on/off only. GPIO mapping is vendor-derived |
-| Suspend | unverified |
+| Updates | `ztos-update check` completes; `apply` upgrades in a single `pacman -Syu` transaction |
+| Venus hardware video encode | **broken** — the rootfs carries no Venus firmware and probe fails after `-ENOENT` |
+| Suspend | `deep` unsupported by firmware; only `s2idle` available, screen-off power not measured |
 
 Details and the exact evidence boundary: [docs/hardware-status.md](docs/hardware-status.md).
 Safety notes before touching the device: [docs/safety.md](docs/safety.md).
