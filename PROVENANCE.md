@@ -57,6 +57,16 @@ Unknown or unclear licence → **excluded**, with the reason written down in
   one-hunk diff from `build/display-minimal-lpm-fix/`, with base and patched
   source hashes. The full patched `.c` is not shipped: it is a generated kernel
   file, regenerable from the pinned tree plus this diff.
+* `patches/userspace/ztcamera/0001-…` — the composed camera-application delta of
+  the accepted build against `ztmetro/camera/ztcamera.c` at the pinned ztOS
+  revision. Derivative of a `GPL-2.0-or-later` upstream file, distributed under
+  the "or later" option; hunk bytes unchanged. Its header records the
+  before/after source hashes and the installed ELF hash.
+* `devices/xiaomi-ugglite/audio/VoiceCall.conf` and the `Voice Call` use case in
+  `audio/xiaomi-ugg.conf` — UCM written for this device from the working mixer
+  state; GPL-3.0-or-later like the rest of the device layer. Control names and
+  values only, no upstream text. It publishes the installed file
+  (`df71fa27e1442a7b170c8546cf7c8360ed3616daa9cfc43b408fb4563ea307ab`) verbatim.
 * `build-environment/*` — verbatim copies. No host path, container name,
   credential or SSH alias was introduced; the scripts were checked for
   `/Users/…` and other personal paths and contain none.
@@ -88,7 +98,20 @@ re-measured; here they are attributed, not asserted.
   visible in the file. `LICENSES/GPL-3.0-or-later.txt` ships the licence text.
 * `devices/…/overlay/usr/local/sbin/swclock-offset-{boot,shutdown}` — from
   postmarketOS/swclock-offset 0.3.0, GPL-3.0-or-later; upstream copyright header
-  retained verbatim.
+  retained verbatim. The published `swclock-offset-shutdown` is the
+  installed-proven revision (`1e23420aef967f0d89dc4f27a170c45e816f4aeda40866befc23062ff34c724f`):
+  the same script plus an atomic offset write (`mktemp`/`sync`/`mv`).
+* `devices/…/overlay/usr/local/sbin/ztos-update` — derivative of ztOS's
+  `os/overlay/usr/local/sbin/ztos-update` at the pinned revision (ztOS ships
+  GPL-3.0 at its root). The local delta classifies offline/signature failures
+  and upgrades in a single `pacman -Syu` transaction. The published file is
+  byte-identical to the installed one
+  (`771698dd9d67c7a0d4c93b9e787c92e5ef3c001522b3ca1c4d19c0c8fe95d334`); it does
+  not carry the two SPDX comment lines an earlier public copy had added.
+* `devices/…/overlay/etc/systemd/system/multi-user.target.wants/ModemManager.service`
+  — an enablement symlink only, pointing at systemd's unit in
+  `/usr/lib/systemd/system`; no upstream file content is copied. The installed
+  root resolves it to the absolute target, which is why this copy does too.
 * `devices/…/overlay/usr/local/sbin/ugglite-modem*`, the systemd units and
   `build-environment/build-ugglite-modem.sh` — original work for this device,
   GPL-3.0-or-later like the rest of the device layer.

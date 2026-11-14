@@ -1,0 +1,2414 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-FileCopyrightText: the ztOS authors (upstream file below)
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch target: ztmetro/camera/ztcamera.c at ztOS
+94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf, the pinned upstream revision.
+This is the composed camera-application delta of the accepted build, not a
+linear series: upstream file sha256 before
+e1dd0e7b528daf1cbc33c74a20d650e25ee60d9836298b5b0346f112177dd1b5; after
+applying this patch 166d8d0490d328cf14ef7d173531eb9f24d94b7bb8450b64e2bb4ed566cacab0,
+which is the source that built the installed
+/usr/local/libexec/ztcamera-ugglite, sha256
+94fd6c3aca38201f691ae4b2bdaba6dda33ac0c536651b18f2f204a160085578. The
+installed binary was rebuilt twice from that source, byte-identical.
+Derivative of a GPL-2.0-or-later upstream file, distributed under the "or
+later" option; hunk bytes unchanged.
+Apply from the root of the pinned ztOS checkout:
+  git apply patches/userspace/ztcamera/0001-ztcamera-ugglite-accepted.patch
+The wrapper, the media-graph setup/release helper and the service that switch
+the graph are not part of this patch.
+
+--- a/ztmetro/camera/ztcamera.c
++++ b/ztmetro/camera/ztcamera.c
+@@ -29,6 +29,10 @@
+ #include <fcntl.h>
+ #include <math.h>
+ #include <pthread.h>
++#include <poll.h>
++#include <signal.h>
++#include <sys/socket.h>
++#include <sys/wait.h>
+ #include <stdarg.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -40,6 +44,9 @@
+ #include <unistd.h>
+ 
+ #include <linux/videodev2.h>
++#ifndef V4L2_PIX_FMT_SGRBG10P
++#define V4L2_PIX_FMT_SGRBG10P v4l2_fourcc('p', 'g', 'A', 'A')	/* RAW10 from a CSI RDI node */
++#endif
+ 
+ #include "zrnmetrocore.h"
+ #include "zrnmetrogpu.h"
+@@ -51,8 +58,25 @@
+ #define DIAL_SCALE	2
+ #define DIAL_R		105	/* the arc's radius, inside it */
+ #define FPS_MS		33	/* the scene is made at up to 30 fps */
+-#define REC_FPS		15	/* what "video" writes, of the frames it is given */
+-#define REC_MAX_BYTES	(48u << 20)	/* raw video stops itself at this size */
++#ifndef REC_FPS
++#define REC_FPS		24	/* what "video" writes, one frame per 1/REC_FPS of wall clock */
++#endif
++#define REC_PERIOD_MS	(1000 / REC_FPS)
++#define REC_FILL_SLOTS	4	/* a stall this many frames long is filled; longer is re-phased */
++#define REC_WRITE_MS	2000u	/* one frame may wait this long for the encoder */
++#define REC_MAX_MS	(5u * 60u * 1000u)
++#ifndef REC_SCALE_NUM
++#define REC_SCALE_NUM	3	/* the recorder's frame is REC_SCALE_NUM/REC_SCALE_DEN of */
++#endif
++#ifndef REC_SCALE_DEN
++#define REC_SCALE_DEN	4	/* the picture: 720x1280 -> 540x960; 1/1 keeps 720x1280 */
++#endif
++#ifndef REC_CRF
++#define REC_CRF		24	/* x264 quality of the clip */
++#endif
++#ifndef REC_MAXRATE_KBPS
++#define REC_MAXRATE_KBPS 3000	/* and its ceiling, in kbit/s */
++#endif
+ #define N_CONTROLS	5
+ #define ROLL_DIR	"ztCamera"	/* ~/Pictures/ztCamera, where captures go */
+ 
+@@ -81,6 +105,7 @@
+ 	char name[80];		/* what the status line says */
+ 	int w, h;
+ 	size_t stride;		/* YUYV bytes per row, including device padding */
++	bool bayer;		/* packed RAW10 from a CSI RDI node, no ISP in the kernel */
+ 	cairo_surface_t *frame;	/* what the viewfinder and the captures show */
+ 	unsigned rev;
+ 
+@@ -91,7 +116,9 @@
+ 
+ 	/* a camera, if the kernel ever gives us one */
+ 	int fd;
++	bool mplane;		/* the node only speaks multiplanar; one plane */
+ 	struct { void *start; size_t len; } buf[4];
++	struct v4l2_plane plane[4][1];	/* what QUERYBUF/DQBUF filled, per buffer */
+ 	int nbuf;
+ } src = { .kind = SRC_SCENE, .w = FRAME_W, .h = FRAME_H, .rate = 15, .fd = -1 };
+ 
+@@ -109,16 +136,115 @@
+ 	uint32_t focus_at, shutter_at, flash_at;
+ 	double dial_angle;	/* where the finger is round the arc, degrees */
+ 	bool dial_drag;
+-	uint32_t rec_start, rec_last_write;
+-	size_t rec_bytes;
++	uint32_t rec_start, rec_next;	/* rec_next: wall clock of the next frame the encoder owes */
++	unsigned rec_written, rec_repeated, rec_skipped;	/* what the pacer did */
++	uint32_t rec_worst_ms;		/* longest one frame ever waited for the encoder */
++	pid_t rec_pid;
+ 	int rec_fd;
+ 	char rec_path[384];
+ 	uint32_t frames, fps_clock;
+ 	int fps;
++	uint32_t started_ms;	/* when the window was first shown: the facing debounce */
++	uint32_t facing_ms;	/* when the in-process camera switch last happened */
+ 	char note[130];		/* the last thing worth a line at the bottom */
+ 	uint32_t note_until;
+ } ui = { .mode = MODE_PHOTO, .dial = -1, .timer_left = -1, .ctl = { 0, 0, 0, 0, 6 } };
+ 
++/* The contrast sweep: a tap on the viewfinder, with no menu or dial on the
++ * screen, walks the lens over the control's range in two short passes. The
++ * coarse pass takes FOCUS_COARSE_STEPS positions from minimum to maximum; the
++ * fine pass then re-visits half a coarse interval either side of the sharpest
++ * coarse position in FOCUS_FINE_STEPS moves (about four times finer). Each
++ * position is given FOCUS_SETTLE_MS to settle, then one frame of the middle of
++ * the picture is scored by its Tenengrad (Sobel) detail, the sharpest is kept,
++ * the parabola through its two neighbours puts the lens between samples, and
++ * the lens is left there. A fixed number of moves, no feedback loop: 14
++ * positions, about 1.8-2.1 s, and a stalled frame clock ends it by timeout
++ * rather than leaving it running. */
++#define FOCUS_COARSE_STEPS	7	/* the range in a few moves, enough to find the hill */
++#define FOCUS_FINE_STEPS	7	/* then four times finer around the coarse best */
++#define FOCUS_SETTLE_MS		110	/* lens and exposure settle before a frame counts */
++#define FOCUS_SWEEP_TIMEOUT_MS	6000	/* the whole two-stage sweep, not one position */
++#define FOCUS_REGION		0.60	/* the middle of the frame, as a fraction */
++#define FOCUS_FINE_SPAN		0.55	/* fine half-window, in coarse intervals */
++
++static struct {
++	bool active;
++	bool automatic;		/* started by the AF monitor, not by a finger */
++	int stage;		/* 0: coarse over the range, 1: fine around the best */
++	int idx;		/* the position being settled, 0-based */
++	int pos[FOCUS_COARSE_STEPS + FOCUS_FINE_STEPS];	/* in control steps */
++	double ten[FOCUS_COARSE_STEPS + FOCUS_FINE_STEPS];	/* detail at each position */
++	double norm[FOCUS_COARSE_STEPS + FOCUS_FINE_STEPS];	/* the same, exposure-normalised */
++	int npos;
++	int coarse_best;	/* the sharpest coarse step: the fine window's centre */
++	double coarse_best_score;
++	unsigned bad;		/* unusable frames in a row at this position */
++	uint32_t started, deadline;
++} sweep;
++
++/* Auto focus on the live V4L2 path: one sweep when the source opens, then a
++ * re-sweep when the picture has really softened for a while, and immediately
++ * when the scene itself changes. A full continuous hill climb would move the
++ * lens every FOCUS_SETTLE_MS and hunt visibly; a sweep and a deadband is the
++ * same contrast score without the hunting and without scoring every frame.
++ * The focus dial and a tap still own the lens: a dial choice turns this off, a
++ * tap runs its own sweep and re-baselines this one. */
++#define AF_INITIAL_MS		1200	/* exposure first: a dark frame scores noise as sharp */
++#define AF_CHECK_MS		2000	/* how often the settled picture is scored */
++#define AF_LOW_FRACTION		0.60	/* falls this far below the focused score ... */
++#define AF_LOW_MS		2000	/* ... for this long before a sweep */
++#define AF_RETRY_MS		6000	/* after a pause this long, re-check a soft picture */
++#define AF_PERIOD_FRACTION	0.85
++#define AF_MIN_GAP_MS		3000	/* never two automatic monitor sweeps closer than this */
++
++/* A different subject does not soften gradually: the luma histogram changes in
++ * one or two frames. That is a stronger and much faster signal than waiting for
++ * the contrast score to fall 40 % for 2 s, so a confirmed scene change runs
++ * AF-S almost at once. Two consecutive frames and a minimum gap keep sensor
++ * noise, a flickering lamp and our own lens move from triggering it. */
++#define AF_SCENE_BINS		16
++#define AF_SCENE_HIST_DIST	0.34	/* L1/2 of the normalised luma histogram */
++#define AF_SCENE_MEAN_FRAC	0.16	/* mean jump as a fraction of black..white */
++#define AF_SCENE_CONFIRM_MS	45	/* two frames at 30 fps is 33 ms */
++#define AF_SCENE_MIN_GAP_MS	900
++
++/* Below black+24 a raw frame is mostly sensor noise and a Tenengrad score can
++ * pick noise as "sharp". Exposure and gain are raised first (see af_boost);
++ * only if that still leaves the frame under black+10 does a sweep refuse. When
++ * even that fails, the attempt is logged and not repeated for this long: no
++ * hunting in a dark room, but a light switched on is noticed via the luma
++ * change and retried at once. */
++#define AF_DARK_RETRY_MS	15000
++#define AF_BOOST_SETTLE_MS	280	/* the sensor lags two frames; score after this */
++
++static struct {
++	bool enabled;		/* a lens was found with this source */
++	bool manual;		/* the focus dial has taken the lens */
++	bool primed;		/* the opening sweep has been started */
++	bool low;		/* past the deadband: the picture is soft */
++	bool scene;		/* a confirmed scene change wants AF-S */
++	uint32_t since;		/* when the source opened */
++	uint32_t last;		/* when the last automatic sweep started */
++	uint32_t next;		/* when to look at the sharpness next */
++	double held;		/* normalised sharpness the last sweep settled on */
++	uint32_t low_since;
++	uint32_t dark_fail_until;	/* no automatic sweep before this after a dark failure */
++} afc;
++
++static struct {
++	bool have;
++	double mean;
++	uint16_t nhist[AF_SCENE_BINS];	/* luma histogram normalised by the frame mean */
++	uint32_t cand_since;
++	uint32_t last_fire;
++} scene;
++
++static struct {
++	bool active;
++	int exp, gain;		/* the values to put back when the sweep ends */
++} af_boost;
++
+ static cairo_surface_t *chrome, *dial_sf, *scratch, *prev, *white;
+ static unsigned chrome_rev, dial_rev;
+ static bool chrome_stale;
+@@ -129,6 +255,66 @@
+ static int replay_w = FRAME_W, replay_h = FRAME_H;
+ static double replay_rate = 15;
+ static const char *device_path;
++/* The two proven capture nodes. The setup service (ugglite-camera-paths) keeps
++ * both media routes enabled, so an in-process switch only closes one V4L2 fd
++ * and opens the other; the window, the UI and this process stay alive. The
++ * node numbers are not assumed to be stable: /run/ugglite-camera-paths, written
++ * by that service from the media topology, names both. */
++#define CAMERA_PATHS_RUN	"/run/ugglite-camera-paths"
++#define CAMERA_PATHS_ETC	"/etc/ugglite-camera-paths"
++static char rear_dev[64] = "/dev/video0";
++static char front_dev[64] = "/dev/video1";
++static bool paths_mapped;	/* /run or /etc named the nodes explicitly */
++/* The front launcher passes --front; the proven front CAPTURE node is
++ * msm_vfe0_video1. Both mean the same thing here: the sensor is mounted upside
++ * down. */
++static bool front_cam;
++
++static bool path_is_video(const char *p) {
++	size_t n;
++	if (!p || strncmp(p, "/dev/video", 10) != 0 || !p[10]) {
++		return false;
++	}
++	n = strlen(p + 10);
++	return strspn(p + 10, "0123456789") == n;
++}
++
++static void camera_paths_load(void) {
++	const char *files[] = { CAMERA_PATHS_RUN, CAMERA_PATHS_ETC };
++	for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); i++) {
++		FILE *f = fopen(files[i], "r");
++		if (!f) {
++			continue;
++		}
++		char line[128];
++		while (fgets(line, sizeof(line), f)) {
++			char *nl = strchr(line, '\n');
++			if (nl) {
++				*nl = 0;
++			}
++			if (!strncmp(line, "REAR=", 5) && path_is_video(line + 5)) {
++				snprintf(rear_dev, sizeof(rear_dev), "%s", line + 5);
++				paths_mapped = true;
++			} else if (!strncmp(line, "FRONT=", 6) && path_is_video(line + 6)) {
++				snprintf(front_dev, sizeof(front_dev), "%s", line + 6);
++				paths_mapped = true;
++			}
++		}
++		fclose(f);
++		break;	/* /run wins over /etc when both exist */
++	}
++}
++
++static bool is_front(void) {
++	if (front_cam) {
++		return true;
++	}
++	if (paths_mapped) {
++		return device_path && !strcmp(device_path, front_dev);
++	}
++	/* no mapping: the proven front node was video1 in the known boots */
++	return device_path && !strcmp(device_path, "/dev/video1");
++}
+ 
+ static void note(const char *fmt, ...);
+ #include "raw-source.h"
+@@ -253,12 +439,1035 @@
+ 	src.rev++;
+ }
+ 
++static int lens_fd = -1;
++static struct v4l2_queryctrl lens_range;
++
++static bool lens_property(const char *entry, const char *property, uint32_t *value) {
++	char path[256];
++	snprintf(path, sizeof(path), "/sys/class/video4linux/%.63s/device/of_node/%s",
++		entry, property);
++	int fd = open(path, O_RDONLY | O_CLOEXEC);
++	if (fd < 0) {
++		return false;
++	}
++	ssize_t n = read(fd, value, sizeof(*value));
++	close(fd);
++	return n == sizeof(*value);
++}
++
++static void lens_open(void) {
++	DIR *dir = opendir("/sys/class/video4linux");
++	if (!dir) {
++		return;
++	}
++	struct dirent *entry;
++	uint32_t focus = 0;
++	while ((entry = readdir(dir))) {
++		if (strncmp(entry->d_name, "v4l-subdev", 10) == 0 &&
++		    lens_property(entry->d_name, "lens-focus", &focus) && focus) {
++			break;
++		}
++	}
++	if (entry) {
++		rewinddir(dir);
++		while ((entry = readdir(dir))) {
++			uint32_t phandle;
++			if (strncmp(entry->d_name, "v4l-subdev", 10) != 0 ||
++			    !lens_property(entry->d_name, "phandle", &phandle) ||
++			    phandle != focus) {
++				continue;
++			}
++			char path[80];
++			snprintf(path, sizeof(path), "/dev/%.63s", entry->d_name);
++			int fd = open(path, O_RDWR | O_CLOEXEC);
++			struct v4l2_queryctrl range = { .id = V4L2_CID_FOCUS_ABSOLUTE };
++			if (fd >= 0 && ioctl(fd, VIDIOC_QUERYCTRL, &range) == 0 &&
++			    !(range.flags & (V4L2_CTRL_FLAG_DISABLED | V4L2_CTRL_FLAG_READ_ONLY)) &&
++			    range.step > 0) {
++				lens_fd = fd;
++				lens_range = range;
++				ui.ctl[1] = 0;
++			} else if (fd >= 0) {
++				close(fd);
++			}
++			break;
++		}
++	}
++	closedir(dir);
++}
++
++/* ---- the sensor's own exposure and gain (the live V4L2 path) -------------- */
++
++/*
++ * The CSI node hands over Bayer while the sensor's exposure, analogue gain and
++ * lens live on their own subdevices. Node numbers are not stable across boots,
++ * so the sensor is found by what it answers: V4L2_CID_EXPOSURE and
++ * V4L2_CID_ANALOGUE_GAIN, both writable. Its sysfs name only breaks a tie,
++ * favouring "s5k", so a CSI receiver or the lens node cannot be mistaken for
++ * it. With no such subdevice the path keeps the old software stretch: a camera
++ * without an exposure control still shows a picture.
++ *
++ * The s5k2xx driver takes exposure in lines (0x0202) and analogue gain as
++ * 0x20..0x200 (0x0204), one frame is 30 fps, so the control's own maximum is
++ * about 1/30 s and 1/500 is where the task's shutter range starts to bite.
++ */
++#define V4L2_AE_PCT		0.45	/* of white above black: mid grey */
++#define V4L2_AE_EVERY		6	/* frames between decisions; the sensor lags two */
++#define V4L2_AE_DEADBAND	0.08	/* +-8 % counts as exposed */
++#define V4L2_AE_STEP		1.5	/* the most one decision may change */
++#define V4L2_AE_STRETCH		1.5	/* software stretch while the sensor is driven */
++#define V4L2_AE_FPS		30.0	/* the exposure maximum is one frame at this rate */
++
++static struct {
++	int fd;				/* the sensor subdev, -1 none */
++	struct v4l2_queryctrl exp, gain;
++	bool ready;
++	int coarse, again;		/* last values written, control units */
++	uint32_t frames, last_ms;
++	int fails;
++} snr = { .fd = -1, .coarse = -1, .again = -1 };
++
++static int clamp_int(int v, int lo, int hi) {
++	return v < lo ? lo : v > hi ? hi : v;
++}
++
++/* VIDIOC_S_CTRL rounds to the control's own grid anyway; writing the value the
++ * log and a later cget will show keeps the two honest. */
++static int sensor_step(const struct v4l2_queryctrl *q, int want) {
++	want = clamp_int(want, q->minimum, q->maximum);
++	if (q->step > 1) {
++		want = q->minimum + (want - q->minimum) / q->step * q->step;
++	}
++	return want;
++}
++
++static void sensor_sysfs_name(const char *entry, char *out, size_t len) {
++	char path[256];
++	out[0] = 0;
++	snprintf(path, sizeof(path), "/sys/class/video4linux/%.63s/name", entry);
++	int fd = open(path, O_RDONLY | O_CLOEXEC);
++	if (fd < 0) {
++		return;
++	}
++	ssize_t n = read(fd, out, len - 1);
++	close(fd);
++	if (n <= 0) {
++		out[0] = 0;
++		return;
++	}
++	out[n] = 0;
++	char *nl = strchr(out, '\n');
++	if (nl) {
++		*nl = 0;
++	}
++}
++
++static bool sensor_query(int fd, uint32_t id, struct v4l2_queryctrl *out) {
++	struct v4l2_queryctrl q;
++	memset(&q, 0, sizeof(q));
++	q.id = id;
++	if (ioctl(fd, VIDIOC_QUERYCTRL, &q) != 0) {
++		return false;
++	}
++	if (q.flags & (V4L2_CTRL_FLAG_DISABLED | V4L2_CTRL_FLAG_READ_ONLY)) {
++		return false;
++	}
++	if (q.type != V4L2_CTRL_TYPE_INTEGER || q.step <= 0 || q.maximum <= q.minimum) {
++		return false;
++	}
++	*out = q;
++	return true;
++}
++
++static void sensor_close(void) {
++	if (snr.fd >= 0) {
++		close(snr.fd);
++	}
++	snr.fd = -1;
++	snr.ready = false;
++	snr.coarse = snr.again = -1;
++	snr.fails = 0;
++}
++
++static void sensor_open(void) {
++	sensor_close();
++	DIR *dir = opendir("/dev");
++	if (!dir) {
++		return;
++	}
++	struct v4l2_queryctrl best_exp = { 0 }, best_gain = { 0 };
++	char best_name[96] = "";
++	int best = -1, best_score = -1;
++	struct dirent *entry;
++	while ((entry = readdir(dir))) {
++		if (strncmp(entry->d_name, "v4l-subdev", 10) != 0) {
++			continue;
++		}
++		char path[80], name[96];
++		snprintf(path, sizeof(path), "/dev/%.63s", entry->d_name);
++		sensor_sysfs_name(entry->d_name, name, sizeof(name));
++		int fd = open(path, O_RDWR | O_CLOEXEC);
++		if (fd < 0) {
++			continue;
++		}
++		struct v4l2_queryctrl e, g;
++		if (!sensor_query(fd, V4L2_CID_EXPOSURE, &e) ||
++		    !sensor_query(fd, V4L2_CID_ANALOGUE_GAIN, &g)) {
++			close(fd);
++			continue;
++		}
++		int score = strstr(name, "s5k") ? 2 : strstr(name, "sensor") ? 1 : 0;
++		if (score > best_score) {
++			if (best >= 0) {
++				close(best);
++			}
++			best = fd;
++			best_score = score;
++			best_exp = e;
++			best_gain = g;
++			snprintf(best_name, sizeof(best_name), "%s", name);
++		} else {
++			close(fd);
++		}
++	}
++	closedir(dir);
++	if (best < 0) {
++		return;
++	}
++	snr.fd = best;
++	snr.exp = best_exp;
++	snr.gain = best_gain;
++	snr.ready = true;
++	/* start from what the sensor has now, so the first decision is a small one */
++	struct v4l2_control c = { .id = V4L2_CID_EXPOSURE };
++	if (ioctl(best, VIDIOC_G_CTRL, &c) != 0) {
++		c.value = best_exp.default_value > 0 ? best_exp.default_value : best_exp.minimum;
++	}
++	snr.coarse = clamp_int(c.value, best_exp.minimum, best_exp.maximum);
++	c.id = V4L2_CID_ANALOGUE_GAIN;
++	if (ioctl(best, VIDIOC_G_CTRL, &c) != 0) {
++		c.value = best_gain.default_value > 0 ? best_gain.default_value : best_gain.minimum;
++	}
++	snr.again = clamp_int(c.value, best_gain.minimum, best_gain.maximum);
++	fprintf(stderr, "ztcamera: sensor %.48s: exposure %d..%d, analogue gain %d..%d, now %d/%d\n",
++		best_name, best_exp.minimum, best_exp.maximum, best_gain.minimum,
++		best_gain.maximum, snr.coarse, snr.again);
++}
++
++static bool sensor_write(uint32_t id, int value, const char *what) {
++	if (!snr.ready || snr.fd < 0) {
++		return false;
++	}
++	struct v4l2_control c = { .id = id, .value = value };
++	if (ioctl(snr.fd, VIDIOC_S_CTRL, &c) == 0) {
++		snr.fails = 0;
++		return true;
++	}
++	if (++snr.fails >= 3) {
++		fprintf(stderr, "ztcamera: sensor %s write failed (%s); back to software exposure\n",
++			what, strerror(errno));
++		sensor_close();	/* the old path takes over again */
++	}
++	return false;
++}
++
++static bool sensor_set_exposure(int lines) {
++	lines = sensor_step(&snr.exp, lines);
++	if (lines == snr.coarse) {
++		return true;
++	}
++	if (!sensor_write(V4L2_CID_EXPOSURE, lines, "exposure")) {
++		return false;
++	}
++	snr.coarse = lines;
++	return true;
++}
++
++static bool sensor_set_gain(int code) {
++	code = sensor_step(&snr.gain, code);
++	if (code == snr.again) {
++		return true;
++	}
++	if (!sensor_write(V4L2_CID_ANALOGUE_GAIN, code, "analogue gain")) {
++		return false;
++	}
++	snr.again = code;
++	return true;
++}
++
++/* ISO 100..3200 on the dial, 32..512 on the sensor. The dial is in ISO stops,
++ * so the gain is too: the whole control range is spread over the five stops
++ * from 100 to 3200, which puts 100 at 32, 800 near 169 and 3200 at the top. */
++static int iso_to_gain(int index) {
++	static const int iso[] = { 100, 200, 400, 800, 1600, 3200 };
++	if (!snr.ready || index < 1 || index > 6) {
++		return -1;
++	}
++	double top = (double)snr.gain.maximum / snr.gain.minimum;
++	double stops = log2((double)iso[index - 1] / iso[0]);
++	double code = snr.gain.minimum * pow(2.0, stops * log2(top) / 5.0);
++	return sensor_step(&snr.gain, (int)(code + 0.5));
++}
++
++/* The dial's shutter in lines. One frame is V4L2_AE_FPS, and the control's own
++ * maximum is that frame less its margin, so 1/30 is the maximum and the range
++ * asked for, 1/30..1/500, lands at 3242..195 on this sensor. Slower speeds
++ * would need a lower frame rate, which this node does not offer; they clamp. */
++static int shutter_to_lines(int index) {
++	static const double sec[] = { 4, 1, 0.25, 1 / 15.0, 1 / 30.0, 1 / 125.0,
++		1 / 500.0, 1 / 2000.0, 1 / 8000.0 };
++	if (!snr.ready || index < 1 || index > 9) {
++		return -1;
++	}
++	double lines = sec[index - 1] * V4L2_AE_FPS * snr.exp.maximum;
++	return sensor_step(&snr.exp, (int)(lines + 0.5));
++}
++
++static void sensor_manual(int control, int value) {
++	if (!snr.ready) {
++		return;
++	}
++	if (control == 2) {
++		if (value == 0) {
++			note("iso: auto");
++		} else {
++			int gain = iso_to_gain(value);
++			if (gain >= 0 && sensor_set_gain(gain)) {
++				note("iso: %s -> analogue_gain %d [%d..%d]", ctl_opts[2][value],
++					snr.again, snr.gain.minimum, snr.gain.maximum);
++			} else {
++				note("iso: sensor write failed");
++			}
++		}
++	} else {
++		if (value == 0) {
++			note("shutter: auto");
++		} else {
++			int lines = shutter_to_lines(value);
++			bool slow = value <= 4;	/* 4 s .. 1/15: past one 30 fps frame */
++			if (lines >= 0 && sensor_set_exposure(lines)) {
++				note("shutter: %s -> exposure %d lines%s [%d..%d]", ctl_opts[3][value],
++					snr.coarse, slow ? " (clamped: one frame is 1/30 s)" : "",
++					snr.exp.minimum, snr.exp.maximum);
++			} else {
++				note("shutter: sensor write failed");
++			}
++		}
++	}
++	snr.frames = 0;
++	snr.last_ms = 0;	/* the next frame decides afresh */
++}
++
++/* Green mean of the Bayer frame, black subtracted; clipped sites are counted
++ * apart so a blown highlight does not pull the decision down on its own. */
++static int sensor_green_mean(const uint16_t *b, int w, int h, int *clip) {
++	long long sum = 0, n = 0, seen = 0, hot = 0;
++	for (int y = 0; y + 1 < h; y += 16) {
++		const uint16_t *row = b + (size_t)y * w;
++		for (int x = 0; x + 1 < w; x += 16) {
++			int v = row[x];	/* (0,0) is green in the GRBG cell */
++			seen++;
++			if (v >= RAW_WHITE - 32) {
++				hot++;
++				continue;
++			}
++			sum += v - RAW_BLACK;
++			n++;
++		}
++	}
++	*clip = seen ? (int)(hot * 100 / seen) : 0;
++	return n ? (int)(sum / n) + RAW_BLACK : 0;
++}
++
++/*
++ * AE in the sensor's own terms: exposure first, gain only once the exposure
++ * control is against one of its ends, which is also the low-noise order. One
++ * auto control is enough: a manual ISO leaves the shutter auto and the other
++ * way round. Both manual means the dials own the sensor and this does nothing.
++ */
++static void sensor_ae(const uint16_t *b, int w, int h) {
++	if (!snr.ready || (ui.ctl[2] != 0 && ui.ctl[3] != 0)) {
++		return;
++	}
++	if (sweep.active) {
++		return;		/* one exposure for the whole focus sweep: comparable scores */
++	}
++	if (++snr.frames < V4L2_AE_EVERY) {
++		return;
++	}
++	snr.frames = 0;
++	uint32_t now = zmc_now_ms();
++	if (snr.last_ms && now - snr.last_ms < 120) {
++		return;
++	}
++	snr.last_ms = now;
++
++	int clip;
++	int green = sensor_green_mean(b, w, h, &clip);
++	double target = RAW_BLACK + V4L2_AE_PCT * (RAW_WHITE - RAW_BLACK);
++	if (clip > 5) {
++		target *= 0.75;		/* hold the highlights */
++	}
++	if (green < RAW_BLACK + 4) {
++		green = RAW_BLACK + 4;
++	}
++	double r = target / green;
++	if (fabs(r - 1) < V4L2_AE_DEADBAND) {
++		return;			/* deadband: neither control clicks back and forth */
++	}
++	r = fmin(V4L2_AE_STEP, fmax(1 / V4L2_AE_STEP, r));
++
++	int lines = snr.coarse > 0 ? snr.coarse : snr.exp.minimum;
++	int gain = snr.again > 0 ? snr.again : snr.gain.minimum;
++	bool iso_manual = ui.ctl[2] != 0, shutter_manual = ui.ctl[3] != 0;
++	double total = (double)lines * gain * r;
++	int want_lines = lines, want_gain = gain;
++	if (!shutter_manual) {
++		want_lines = sensor_step(&snr.exp, (int)(lines * r + 0.5));
++	}
++	if (!iso_manual) {
++		want_gain = sensor_step(&snr.gain, (int)(total / (want_lines > 0 ? want_lines : 1) + 0.5));
++	}
++	if (want_lines == lines && want_gain == gain) {
++		return;
++	}
++	bool moved = false;
++	if (want_lines != lines && sensor_set_exposure(want_lines)) {
++		moved = true;
++	}
++	if (want_gain != gain && sensor_set_gain(want_gain)) {
++		moved = true;
++	}
++	if (moved) {
++		fprintf(stderr, "ztcamera: ae green %d target %.0f%s -> exposure %d gain %d\n",
++			green, target, clip > 5 ? " clipped" : "", snr.coarse, snr.again);
++	}
++}
++
++static const char *control_label(int control, int value) {
++	if (control == 1 && lens_fd >= 0) {
++		static const char *const labels[] = { "default", "high", "middle", "low" };
++		return labels[value];
++	}
++	return ctl_opts[control][value];
++}
++
++/* The four values the focus dial offers, on the control's own step grid. */
++static int lens_preset(int index) {
++	int steps = lens_range.step > 0 ?
++		(lens_range.maximum - lens_range.minimum) / lens_range.step : 0;
++	if (index == 1) {
++		return lens_range.maximum;
++	}
++	if (index == 2) {
++		return lens_range.minimum + (steps / 2) * lens_range.step;
++	}
++	if (index == 3) {
++		return lens_range.minimum;
++	}
++	return lens_range.default_value;
++}
++
++/* One write to V4L2_CID_FOCUS_ABSOLUTE. The dial and the sweep both go through
++ * here, so neither can drift from the control's own range and step. */
++static bool lens_set_value(int value) {
++	if (lens_fd < 0) {
++		return false;
++	}
++	struct v4l2_control focus = { .id = V4L2_CID_FOCUS_ABSOLUTE, .value = value };
++	return ioctl(lens_fd, VIDIOC_S_CTRL, &focus) == 0;
++}
++
++static bool control_set(int control, int value) {
++	if (control == 1 && lens_fd >= 0) {
++		if (!lens_set_value(lens_preset(value))) {
++			note("focus: %s", strerror(errno));
++			return false;
++		}
++		/* a hand on the dial wins over the sweep, always */
++		sweep.active = false;
++		if (value == 0) {
++			/* the dial's "default" is its auto: let the AF have the lens back */
++			afc.manual = false;
++			afc.held = 0;
++			afc.primed = false;
++			afc.next = zmc_now_ms() + 400;
++		} else {
++			afc.manual = true;
++		}
++	}
++	ui.ctl[control] = value;
++	if ((control == 2 || control == 3) && src.kind == SRC_V4L2 && snr.ready) {
++		sensor_manual(control, value);	/* its note() says what was written */
++	}
++	return true;
++}
++
++/* ---- the contrast sweep ---------------------------------------------------- */
++
++/* The last frame's green mean, in raw counts, shared by the sweep and the AF
++ * monitor: a black frame's noise scores as sharp at any lens position, and a
++ * blown one has no detail left to score. */
++static int bayer_mean = RAW_BLACK;
++
++static int lens_steps(void) {
++	return lens_range.step > 0 ?
++		(lens_range.maximum - lens_range.minimum) / lens_range.step : 0;
++}
++
++static int lens_at_step(int step) {
++	int value = lens_range.minimum + step * lens_range.step;
++	return value > lens_range.maximum ? lens_range.maximum : value;
++}
++
++/* The two passes on the control's own step grid. The coarse pass is the whole
++ * range; the fine pass is half a coarse interval either side of the sharpest
++ * coarse position, which always brackets the peak (the coarse best is at most
++ * half an interval from it) and is about four times finer than a coarse move. */
++static void focus_sweep_positions(bool fine) {
++	int span = lens_steps();
++	int count = fine ? FOCUS_FINE_STEPS : FOCUS_COARSE_STEPS;
++	int lo = 0, hi = span;
++	if (fine) {
++		int cstep = span / (FOCUS_COARSE_STEPS - 1);
++		int half = (int)(cstep * FOCUS_FINE_SPAN + 0.5);
++		if (half < 1) {
++			half = 1;
++		}
++		lo = sweep.coarse_best - half;
++		hi = sweep.coarse_best + half;
++		if (lo < 0) {
++			lo = 0;
++		}
++		if (hi > span) {
++			hi = span;
++		}
++		if (hi - lo < 2) {
++			lo = sweep.coarse_best > 0 ? sweep.coarse_best - 1 : 0;
++			hi = sweep.coarse_best < span ? sweep.coarse_best + 1 : span;
++		}
++	}
++	sweep.npos = 0;
++	for (int i = 0; i < count; i++) {
++		int step = lo + (int)(((long)(hi - lo) * i + (count - 1) / 2) / (count - 1));
++		if (sweep.npos == 0 || step != sweep.pos[sweep.npos - 1]) {
++			sweep.pos[sweep.npos++] = step;
++		}
++	}
++}
++
++static int luma_of(uint32_t p) {
++	return (int)((((p >> 16) & 0xff) * 77 + ((p >> 8) & 0xff) * 151 +
++		(p & 0xff) * 28) >> 8);
++}
++
++/* Tenengrad sharpness of the middle 60 % of the picture: the sum of squared
++ * Sobel gradients. Squaring weights real edges over the sensor's noise floor,
++ * which the old mean absolute step did not; dividing by the squared mean luma
++ * makes the score comparable when the AE changes the exposure between the
++ * sweep and the monitor. Frames with no trustworthy detail are rejected only
++ * when they are truly unusable: a raw green mean at the black floor, a nearly
++ * black ROI, or a clipped ROI all return -2. The old black+30 gate is gone:
++ * the AF raises exposure and gain before scoring a dark scene (af_boost), and
++ * black+10 is the honest floor below which the remaining samples are noise. */
++static double focus_region_score(double *mean_out, double *norm_out) {
++	if (src.kind != SRC_V4L2 || !src.bayer || !src.frame ||
++	    cairo_surface_status(src.frame) != CAIRO_STATUS_SUCCESS) {
++		return -1;
++	}
++	int w = cairo_image_surface_get_width(src.frame);
++	int h = cairo_image_surface_get_height(src.frame);
++	int rw = (int)(w * FOCUS_REGION) & ~1, rh = (int)(h * FOCUS_REGION) & ~1;
++	const uint8_t *data = cairo_image_surface_get_data(src.frame);
++	if (rw < 16 || rh < 16 || !data) {
++		return -1;
++	}
++	if (bayer_mean < RAW_BLACK + 10 || bayer_mean > RAW_WHITE - 16) {
++		return -2;	/* below the noise floor / fully blown: nothing to score */
++	}
++	int stride = cairo_image_surface_get_stride(src.frame);
++	int x0 = (w - rw) / 2, y0 = (h - rh) / 2;
++	double sum_g2 = 0, sum_l = 0;
++	long n = 0, blown = 0;
++	for (int y = y0; y < y0 + rh; y++) {
++		const uint32_t *up = (const uint32_t *)(data + (size_t)(y - 1) * stride);
++		const uint32_t *mid = (const uint32_t *)(data + (size_t)y * stride);
++		const uint32_t *down = (const uint32_t *)(data + (size_t)(y + 1) * stride);
++		for (int x = x0; x < x0 + rw; x++) {
++			int l00 = luma_of(up[x - 1]), l01 = luma_of(up[x]), l02 = luma_of(up[x + 1]);
++			int l10 = luma_of(mid[x - 1]), l11 = luma_of(mid[x]), l12 = luma_of(mid[x + 1]);
++			int l20 = luma_of(down[x - 1]), l21 = luma_of(down[x]), l22 = luma_of(down[x + 1]);
++			int gx = (l02 + 2 * l12 + l22) - (l00 + 2 * l10 + l20);
++			int gy = (l20 + 2 * l21 + l22) - (l00 + 2 * l01 + l02);
++			sum_g2 += (double)gx * gx + (double)gy * gy;
++			sum_l += l11;
++			if (l11 >= 250) {
++				blown++;
++			}
++			n++;
++		}
++	}
++	if (n < 256) {
++		return -1;
++	}
++	double mean = sum_l / (double)n;
++	if (mean < 3 || blown * 100 > n * 15) {
++		return -2;	/* the ROI itself is black or mostly clipped */
++	}
++	double ten = sum_g2 / (double)n;
++	if (mean_out) {
++		*mean_out = mean;
++	}
++	if (norm_out) {
++		*norm_out = ten / ((mean + 1) * (mean + 1));
++	}
++	return ten;
++}
++
++/* ---- scene change: AF-S when the subject, not the focus, changes ---------- */
++
++/* Fed from bayer_frame() with a 16-bin histogram of the same sampled green
++ * sites, normalised by that frame's mean luma so a global AE step does not look
++ * like a new subject. A scene change moves this shape in one frame; two
++ * consecutive detections (45 ms at 30 fps) confirm it and the next tick runs
++ * AF-S. A large mean jump must also move the shape, so a lamp or the AE is not
++ * mistaken for a new plan. Between events the reference adapts slowly. */
++static void scene_observe(const uint16_t *nhist, unsigned n, int mean) {
++	if (n == 0) {
++		return;
++	}
++	if (sweep.active) {
++		return;		/* the lens is moving: not evidence about the scene */
++	}
++	uint32_t now = zmc_now_ms();
++	if (!scene.have) {
++		scene.have = true;
++		scene.mean = mean;
++		memcpy(scene.nhist, nhist, sizeof(scene.nhist));
++		scene.cand_since = 0;
++		return;
++	}
++	double dist = 0;
++	for (int i = 0; i < AF_SCENE_BINS; i++) {
++		dist += fabs((double)nhist[i] - scene.nhist[i]);
++	}
++	dist /= 2.0 * n;
++	double mean_jump = fabs((double)mean - scene.mean);
++	bool jump = dist > AF_SCENE_HIST_DIST ||
++		(mean_jump > AF_SCENE_MEAN_FRAC * (RAW_WHITE - RAW_BLACK) &&
++		 dist > AF_SCENE_HIST_DIST / 3.0);
++	if (jump) {
++		if (!scene.cand_since) {
++			scene.cand_since = now;
++		} else if (now - scene.cand_since >= AF_SCENE_CONFIRM_MS &&
++			   now - scene.last_fire >= AF_SCENE_MIN_GAP_MS) {
++			/* confirmed: one AF-S, then a fresh reference */
++			scene.last_fire = now;
++			scene.cand_since = 0;
++			scene.have = false;
++			afc.scene = true;
++		}
++	} else {
++		scene.cand_since = 0;
++		scene.mean += ((double)mean - scene.mean) * 0.2;
++		for (int i = 0; i < AF_SCENE_BINS; i++) {
++			scene.nhist[i] = (uint16_t)((scene.nhist[i] * 4u + nhist[i] + 2u) / 5u);
++		}
++	}
++}
++
++/* A dark scene is exposed for the sweep instead of being refused. Exposure is
++ * raised first (longer integration is the low-noise way), then analogue gain,
++ * for a total of about 6x, bounded by the sensor's own control maxima. The
++ * previous values go back when the sweep ends and the AE takes over again; the
++ * one exposure for all positions keeps the scores comparable. If both ISO and
++ * shutter are manual the user owns the exposure and is not overridden. */
++static void af_boost_restore(void) {
++	if (!af_boost.active) {
++		return;
++	}
++	af_boost.active = false;
++	int exp = af_boost.exp, gain = af_boost.gain;
++	af_boost.exp = af_boost.gain = 0;
++	if (snr.ready) {
++		sensor_set_exposure(exp);
++		sensor_set_gain(gain);
++	}
++}
++
++static void af_boost_start(void) {
++	if (!snr.ready || af_boost.active || bayer_mean >= RAW_BLACK + 24) {
++		return;
++	}
++	if (ui.ctl[2] != 0 && ui.ctl[3] != 0) {
++		return;		/* both manual: the dials own the exposure */
++	}
++	int old_exp = snr.coarse, old_gain = snr.again;
++	if (old_exp <= 0 || old_gain <= 0) {
++		return;
++	}
++	af_boost.active = true;
++	af_boost.exp = old_exp;
++	af_boost.gain = old_gain;
++	if (ui.ctl[3] == 0) {
++		sensor_set_exposure(sensor_step(&snr.exp, old_exp * 2));
++	}
++	if (ui.ctl[2] == 0) {
++		double used = (double)snr.coarse / old_exp;
++		double want = used > 0 ? 6.0 / used : 6.0;
++		sensor_set_gain(sensor_step(&snr.gain, (int)(old_gain * want + 0.5)));
++	}
++	fprintf(stderr, "ztcamera: af dark boost: exposure %d->%d gain %d->%d\n",
++		old_exp, snr.coarse, old_gain, snr.again);
++}
++
++static void focus_sweep_cancel(const char *why) {
++	if (!sweep.active) {
++		return;
++	}
++	bool was_auto = sweep.automatic;
++	sweep.active = false;
++	if (why && strstr(why, "dark")) {
++		afc.dark_fail_until = zmc_now_ms() + AF_DARK_RETRY_MS;
++	}
++	af_boost_restore();
++	afc.scene = false;
++	scene.have = false;	/* the scene reference is new after the lens moved */
++	if (why && !was_auto) {
++		note("%s", why);
++	}
++	if (was_auto) {
++		/* a failed opening sweep must not become the monitor's baseline:
++		 * retry a little later instead of living with a soft picture */
++		afc.primed = false;
++		afc.next = zmc_now_ms() + 3000;
++	}
++	chrome_redraw_mark();
++}
++
++/* false when the lens, a menu, the recorder or the exposure mean "not now". */
++static bool focus_sweep_start(bool automatic) {
++	if (lens_fd < 0 || src.kind != SRC_V4L2 || !src.bayer) {
++		return false;	/* no lens on this source, nothing to sweep */
++	}
++	if (ui.recording) {
++		if (!automatic) {
++			note("focus: off while recording");
++		}
++		return false;	/* the focus a clip starts with is the focus it keeps */
++	}
++	if (ui.menu || ui.reviewing || ui.about || ui.dial >= 0) {
++		if (!automatic) {
++			note("focus: close the dial first");
++		}
++		return false;
++	}
++	if (bayer_mean > RAW_WHITE - 16) {
++		if (!automatic) {
++			note("focus: frame is clipped");
++		}
++		return false;	/* a blown frame has no detail to score */
++	}
++	af_boost_start();	/* a dark frame is exposed for the sweep, not refused */
++	sweep.active = false;	/* a second tap starts over */
++	sweep.automatic = automatic;
++	sweep.stage = 0;
++	sweep.idx = 0;
++	sweep.bad = 0;
++	sweep.coarse_best = 0;
++	sweep.coarse_best_score = 0;
++	focus_sweep_positions(false);
++	if (!lens_set_value(lens_at_step(sweep.pos[0]))) {
++		af_boost_restore();
++		note("focus: %s", strerror(errno));
++		return false;
++	}
++	uint32_t now = zmc_now_ms();
++	sweep.active = true;
++	sweep.started = now;
++	sweep.deadline = now + (af_boost.active ? AF_BOOST_SETTLE_MS : FOCUS_SETTLE_MS);
++	ui.focusing = false;
++	ui.focused = false;
++	if (!automatic) {
++		note("focus: sweeping");
++		zmc_haptic("tick");	/* an automatic sweep must not buzz at the user */
++	}
++	chrome_redraw_mark();
++	return true;
++}
++
++/* Back to the sharpest position, and stop there: the lens is not hunting. The
++ * final value is the vertex of the parabola through the best fine sample and
++ * its two neighbours, so the lens lands between measurement steps. */
++static void focus_sweep_finish(void) {
++	int n = sweep.npos;
++	if (n <= 0) {
++		focus_sweep_cancel("focus: nothing to score");
++		return;
++	}
++	int fb = 0;
++	for (int i = 1; i < n; i++) {
++		if (sweep.ten[i] > sweep.ten[fb]) {
++			fb = i;
++		}
++	}
++	/* The coarse best is one of the fine positions. Re-measuring the same
++	 * lens position moves the score by a few percent of noise; that must not
++	 * move the lens off the position the coarse pass selected. */
++	int cb = -1;
++	for (int i = 0; i < n; i++) {
++		if (sweep.pos[i] == sweep.coarse_best) {
++			cb = i;
++		}
++	}
++	if (cb >= 0 && sweep.ten[cb] * 1.02 > sweep.ten[fb]) {
++		fb = cb;
++	}
++	int step = sweep.pos[fb];
++	double score = sweep.ten[fb], norm = sweep.norm[fb];
++	if (fb > 0 && fb + 1 < n && sweep.pos[fb + 1] > sweep.pos[fb]) {
++		double a = sweep.ten[fb - 1], b = sweep.ten[fb], c = sweep.ten[fb + 1];
++		double den = a - 2 * b + c;
++		if (den < 0) {
++			double off = 0.5 * (a - c) / den;
++			if (off > 0.75) {
++				off = 0.75;
++			} else if (off < -0.75) {
++				off = -0.75;
++			}
++			step = (int)(sweep.pos[fb] + off * (sweep.pos[fb + 1] - sweep.pos[fb]) + 0.5);
++		}
++	}
++	if (step < lens_range.minimum) {
++		step = lens_range.minimum;
++	}
++	if (step > lens_range.maximum) {
++		step = lens_range.maximum;
++	}
++	bool was_auto = sweep.automatic;
++	sweep.active = false;
++	if (lens_set_value(step)) {
++		if (!was_auto) {
++			for (int i = 0; i < 4; i++) {
++				if (lens_preset(i) == step) {
++					ui.ctl[1] = i;	/* the dial's label tells the truth */
++				}
++			}
++		}
++		ui.focusing = false;
++		ui.focused = true;
++		/* the normalised sharpness this position settled on: the monitor's baseline */
++		afc.held = norm;
++		afc.low = false;
++		afc.low_since = 0;
++		afc.primed = true;	/* a tap is as good as the opening sweep */
++		afc.last = zmc_now_ms();
++		afc.next = afc.last + AF_CHECK_MS;
++		int ms = (int)(afc.last - sweep.started);
++		int steps = FOCUS_COARSE_STEPS + n;
++		if (!was_auto) {
++			note("focus: %d steps, best=%d, score=%.0f, ms=%d", steps, step, score, ms);
++			zmc_haptic("tap");
++		}
++		fprintf(stderr, "ztcamera: focus %s: %d steps, best=%d, score=%.0f "
++			"(norm %.4f), ms=%d\n", was_auto ? "auto" : "tap", steps, step,
++			score, norm, ms);
++	} else if (!was_auto) {
++		note("focus: lens write failed");
++	}
++	af_boost_restore();	/* AE takes the exposure back after the sweep */
++	afc.scene = false;
++	scene.have = false;	/* re-baseline the scene on the first settled frame */
++	chrome_redraw_mark();
++}
++
++/* One frame in, while a sweep is running: score the settled position, keep it
++ * if it is the sharpest, then move on. Only frame_arrived calls this, so the
++ * whole sweep costs one score per position, not one per tick. */
++static void focus_sweep_frame(uint32_t now) {
++	if (!sweep.active) {
++		return;
++	}
++	if (now - sweep.started > FOCUS_SWEEP_TIMEOUT_MS) {
++		focus_sweep_cancel("focus: sweep timed out");
++		return;
++	}
++	if (now < sweep.deadline) {
++		return;
++	}
++	double mean = 0, norm = 0;
++	double score = focus_region_score(&mean, &norm);
++	if (score == -2) {
++		if (++sweep.bad > 3) {
++			focus_sweep_cancel(bayer_mean < RAW_BLACK + 24 ?
++				"focus: too dark even at boosted exposure" :
++				"focus: frame is clipped");
++			return;
++		}
++		sweep.deadline = now + FOCUS_SETTLE_MS / 2;
++		return;
++	}
++	if (score < 0) {
++		focus_sweep_cancel("focus: nothing to score");
++		return;
++	}
++	sweep.bad = 0;
++	sweep.ten[sweep.idx] = score;
++	sweep.norm[sweep.idx] = norm;
++	if (sweep.idx + 1 >= sweep.npos) {
++		if (sweep.stage == 0) {
++			/* the coarse pass is done: keep its best and look closer */
++			int bi = 0;
++			for (int i = 1; i < sweep.npos; i++) {
++				if (sweep.ten[i] > sweep.ten[bi]) {
++					bi = i;
++				}
++			}
++			sweep.coarse_best = sweep.pos[bi];
++			sweep.coarse_best_score = sweep.ten[bi];
++			sweep.stage = 1;
++			sweep.idx = 0;
++			focus_sweep_positions(true);
++			if (!lens_set_value(lens_at_step(sweep.pos[0]))) {
++				focus_sweep_cancel("focus: lens write failed");
++				return;
++			}
++			sweep.deadline = now + FOCUS_SETTLE_MS;
++			return;
++		}
++		focus_sweep_finish();
++		return;
++	}
++	sweep.idx++;
++	if (!lens_set_value(lens_at_step(sweep.pos[sweep.idx]))) {
++		focus_sweep_cancel("focus: lens write failed");
++		return;
++	}
++	sweep.deadline = now + FOCUS_SETTLE_MS;
++}
++
++/* A sweep started by the monitor rather than by a finger. The lens moves in a
++ * clip would be recorded, so a recording keeps the focus it started with. A
++ * dark failure is not retried until AF_DARK_RETRY_MS has passed, unless a
++ * scene change clears that stamp: no hunting in the dark. */
++static bool af_sweep(uint32_t now, const char *why) {
++	if (ui.recording) {
++		return false;
++	}
++	if (bayer_mean < RAW_BLACK + 24 && (int32_t)(now - afc.dark_fail_until) < 0) {
++		return false;
++	}
++	fprintf(stderr, "ztcamera: af sweep: %s\n", why);
++	if (!focus_sweep_start(true)) {
++		return false;
++	}
++	afc.last = now;
++	afc.low_since = 0;
++	afc.primed = true;
++	afc.scene = false;
++	return true;
++}
++
++/* AF-S at open, an immediate AF-S on a confirmed scene change, then AF-C in
++ * behaviour: watch the contrast score with a Schmitt deadband and sweep again
++ * only when the picture stays at least 40 % softer for 2 s, or when it is
++ * still somewhat softer after a six-second pause. Never on every check, and
++ * never two monitor sweeps closer than three seconds: a static scene keeps the
++ * focus it has. Scored from tick, not every frame: the monitor must not cost a
++ * pass over the picture at 30 fps. */
++static void v4l2_af_tick(uint32_t now) {
++	if (src.kind != SRC_V4L2 || !src.bayer || !afc.enabled || afc.manual || lens_fd < 0) {
++		return;
++	}
++	if (ui.dial >= 0 || ui.reviewing || ui.menu || ui.about || ui.recording) {
++		return;		/* a dial, a page or a clip owns the camera */
++	}
++	if (sweep.active) {
++		return;
++	}
++	/* A subject change is abrupt: run AF-S now rather than wait for the score
++	 * to fall 40 % for 2 s. The 900 ms gap only rejects a double trigger from
++	 * our own previous lens move; it is well below the old 10 s wait. */
++	if (afc.scene) {
++		afc.scene = false;
++		afc.dark_fail_until = 0;	/* the light may have changed too */
++		if (now - afc.last >= AF_SCENE_MIN_GAP_MS) {
++			if (af_sweep(now, "scene changed")) {
++				return;
++			}
++		}
++	}
++	bool dark = bayer_mean < RAW_BLACK + 24;
++	if (dark && (int32_t)(now - afc.dark_fail_until) < 0) {
++		return;		/* failed even after the boost: do not hunt */
++	}
++	if (bayer_mean > RAW_WHITE - 16) {
++		return;		/* all white: no detail to score */
++	}
++	if (!afc.primed) {
++		if ((int32_t)(now - afc.next) >= 0) {
++			if (af_sweep(now, "source opened")) {
++				afc.primed = true;
++			} else {
++				afc.next = now + (dark ? AF_DARK_RETRY_MS : 500);
++				if (dark) {
++					afc.dark_fail_until = now + AF_DARK_RETRY_MS;
++					fprintf(stderr, "ztcamera: af: still dark after boost; "
++						"no automatic sweep for %d s\n", AF_DARK_RETRY_MS / 1000);
++				}
++			}
++		}
++		return;
++	}
++	if ((int32_t)(now - afc.next) < 0) {
++		return;
++	}
++	afc.next = now + AF_CHECK_MS;
++	if (now - afc.last < AF_MIN_GAP_MS) {
++		return;
++	}
++	double norm = 0;
++	double score = focus_region_score(NULL, &norm);
++	if (score < 0) {
++		return;
++	}
++	if (afc.held <= 0) {
++		afc.held = norm;
++		return;
++	}
++	if (norm < afc.held * AF_LOW_FRACTION) {
++		afc.low = true;
++		if (!afc.low_since) {
++			afc.low_since = now;
++		} else if (now - afc.low_since >= AF_LOW_MS) {
++			af_sweep(now, "contrast fell 40%");
++			return;
++		}
++	} else {
++		afc.low = false;
++		afc.low_since = 0;
++	}
++	if (!afc.low && now - afc.last >= AF_RETRY_MS &&
++	    norm < afc.held * AF_PERIOD_FRACTION) {
++		af_sweep(now, "still soft after 6 s");
++	}
++}
++
+ static void source_stop(void) {
++	focus_sweep_cancel("focus: source closed");
++	af_boost_restore();
++	if (lens_fd >= 0) {
++		close(lens_fd);
++		lens_fd = -1;
++	}
++	sensor_close();
++	memset(&afc, 0, sizeof(afc));
+ 	raw_close();
+ 	if (src.fd >= 0) {
+ 		zmc_watch_fd(src.fd, NULL, NULL);
+ 		if (src.nbuf) {
+-			enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
++			enum v4l2_buf_type type = src.mplane ?
++				V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE : V4L2_BUF_TYPE_VIDEO_CAPTURE;
+ 			ioctl(src.fd, VIDIOC_STREAMOFF, &type);
+ 		}
+ 		for (int i = 0; i < src.nbuf; i++) {
+@@ -273,58 +1482,136 @@
+ 		src.map = NULL;
+ 	}
+ 	src.frame_bytes = 0;
++	src.bayer = false;
++	src.mplane = false;
+ }
+ 
+ /* The V4L2 path, written the ordinary way: the one part of the app this phone
+- * cannot exercise, so it stays dull and standard. */
++ * cannot exercise, so it stays dull and standard. A node that only speaks the
++ * multiplanar API (CAMSS does) is streamed that way, one plane; a node that
++ * answers the single-planar one — UVC, any YUYV camera — keeps the old path. */
+ static bool v4l2_open(const char *dev) {
+ 	int fd = open(dev, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+ 	if (fd < 0) {
+ 		return false;
+ 	}
+ 	struct v4l2_capability cap;
+-	if (ioctl(fd, VIDIOC_QUERYCAP, &cap) != 0 ||
+-			!((cap.capabilities & V4L2_CAP_DEVICE_CAPS ? cap.device_caps : cap.capabilities) & V4L2_CAP_VIDEO_CAPTURE)) {
++	if (ioctl(fd, VIDIOC_QUERYCAP, &cap) != 0) {
++		close(fd);
++		return false;
++	}
++	unsigned caps = cap.capabilities & V4L2_CAP_DEVICE_CAPS ?
++		cap.device_caps : cap.capabilities;
++	bool single = caps & V4L2_CAP_VIDEO_CAPTURE;
++	bool multi = caps & V4L2_CAP_VIDEO_CAPTURE_MPLANE;
++	if (!single && !multi) {
+ 		close(fd);
+ 		return false;
+ 	}
++	/* What the node is already set to comes first: on this phone the CSI RDI
++	 * node belongs to a graph somebody else configured, and opening it is not
++	 * permission to reprogram the sensor. Anything else is asked for YUYV as
++	 * it always was. */
+ 	struct v4l2_format fmt;
++	bool bayer = false, mplane = false;
++	int fw = 0, fh = 0;
++	size_t stride = 0, image_size = 0;
+ 	memset(&fmt, 0, sizeof(fmt));
+-	fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+-	fmt.fmt.pix.width = FRAME_W;
+-	fmt.fmt.pix.height = FRAME_H;
+-	fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+-	fmt.fmt.pix.field = V4L2_FIELD_NONE;
+-	if (ioctl(fd, VIDIOC_S_FMT, &fmt) != 0 ||
+-			fmt.fmt.pix.pixelformat != V4L2_PIX_FMT_YUYV ||
+-			fmt.fmt.pix.width < 16 || fmt.fmt.pix.width > 4096 ||
+-			fmt.fmt.pix.height < 16 || fmt.fmt.pix.height > 4096 ||
+-			(fmt.fmt.pix.width & 1) ||
+-			fmt.fmt.pix.bytesperline < fmt.fmt.pix.width * 2) {
++	if (single) {
++		fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
++		if (ioctl(fd, VIDIOC_G_FMT, &fmt) == 0 &&
++				fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_SGRBG10P &&
++				fmt.fmt.pix.width >= 16 && fmt.fmt.pix.width <= 4096 &&
++				fmt.fmt.pix.height >= 16 && fmt.fmt.pix.height <= 4096) {
++			bayer = true;
++			fw = fmt.fmt.pix.width;
++			fh = fmt.fmt.pix.height;
++			stride = fmt.fmt.pix.bytesperline;
++			image_size = fmt.fmt.pix.sizeimage;
++		}
++	}
++	if (!bayer && multi) {
++		memset(&fmt, 0, sizeof(fmt));
++		fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
++		if (ioctl(fd, VIDIOC_G_FMT, &fmt) == 0 &&
++				fmt.fmt.pix_mp.num_planes == 1 &&
++				fmt.fmt.pix_mp.pixelformat == V4L2_PIX_FMT_SGRBG10P &&
++				fmt.fmt.pix_mp.width >= 16 && fmt.fmt.pix_mp.width <= 4096 &&
++				fmt.fmt.pix_mp.height >= 16 && fmt.fmt.pix_mp.height <= 4096) {
++			bayer = true;
++			mplane = true;
++			fw = fmt.fmt.pix_mp.width;
++			fh = fmt.fmt.pix_mp.height;
++			stride = fmt.fmt.pix_mp.plane_fmt[0].bytesperline;
++			image_size = fmt.fmt.pix_mp.plane_fmt[0].sizeimage;
++		}
++	}
++	if (!bayer) {
++		if (!single) {
++			close(fd);	/* only multiplanar, and not the RAW10 this app knows */
++			return false;
++		}
++		memset(&fmt, 0, sizeof(fmt));
++		fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
++		fmt.fmt.pix.width = FRAME_W;
++		fmt.fmt.pix.height = FRAME_H;
++		fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
++		fmt.fmt.pix.field = V4L2_FIELD_NONE;
++		if (ioctl(fd, VIDIOC_S_FMT, &fmt) != 0 ||
++				fmt.fmt.pix.pixelformat != V4L2_PIX_FMT_YUYV ||
++				fmt.fmt.pix.width < 16 || fmt.fmt.pix.width > 4096 ||
++				fmt.fmt.pix.height < 16 || fmt.fmt.pix.height > 4096 ||
++				(fmt.fmt.pix.width & 1) ||
++				fmt.fmt.pix.bytesperline < fmt.fmt.pix.width * 2) {
++			close(fd);
++			return false;
++		}
++		fw = fmt.fmt.pix.width;
++		fh = fmt.fmt.pix.height;
++		stride = fmt.fmt.pix.bytesperline;
++	}
++	/* four 10-bit pixels in five bytes: a width that is not a multiple of
++	 * four has no row length this unpacker can trust, and neither a short
++	 * stride nor a plane smaller than stride * height can hold one frame */
++	if (bayer && ((fw & 3) || stride < (size_t)(fw / 4) * 5 ||
++			(image_size && stride * (size_t)fh > image_size))) {
+ 		close(fd);
+ 		return false;
+ 	}
+ 	struct v4l2_requestbuffers req;
+ 	memset(&req, 0, sizeof(req));
+ 	req.count = 4;
+-	req.type = fmt.type;
++	req.type = mplane ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE :
++		V4L2_BUF_TYPE_VIDEO_CAPTURE;
+ 	req.memory = V4L2_MEMORY_MMAP;
+ 	if (ioctl(fd, VIDIOC_REQBUFS, &req) != 0 || req.count < 2 || req.count > 4) {
+ 		close(fd);
+ 		return false;
+ 	}
+ 	src.fd = fd;
+-	src.stride = fmt.fmt.pix.bytesperline;
++	src.stride = stride;
++	src.bayer = bayer;
++	src.mplane = mplane;
+ 	for (unsigned i = 0; i < req.count; i++) {
+-		struct v4l2_buffer b = { .type = fmt.type,
++		struct v4l2_buffer b = { .type = req.type,
+ 			.memory = V4L2_MEMORY_MMAP, .index = i };
+-		if (ioctl(fd, VIDIOC_QUERYBUF, &b) != 0 ||
+-				b.length < src.stride * fmt.fmt.pix.height) {
++		if (mplane) {
++			memset(src.plane[i], 0, sizeof(src.plane[i]));
++			b.m.planes = src.plane[i];
++			b.length = 1;
++		}
++		if (ioctl(fd, VIDIOC_QUERYBUF, &b) != 0) {
+ 			source_stop();
+ 			return false;
+ 		}
+-		src.buf[i].len = b.length;
+-		src.buf[i].start = mmap(NULL, b.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, b.m.offset);
++		size_t len = mplane ? src.plane[i][0].length : b.length;
++		off_t offset = mplane ? src.plane[i][0].m.mem_offset : b.m.offset;
++		if (len < stride * (size_t)fh) {
++			source_stop();
++			return false;
++		}
++		src.buf[i].len = len;
++		src.buf[i].start = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, offset);
+ 		if (src.buf[i].start == MAP_FAILED) {
+ 			source_stop();
+ 			return false;
+@@ -335,14 +1622,22 @@
+ 			return false;
+ 		}
+ 	}
+-	enum v4l2_buf_type type = fmt.type;
++	enum v4l2_buf_type type = req.type;
+ 	if (ioctl(fd, VIDIOC_STREAMON, &type) != 0) {
+ 		source_stop();	/* what was mapped, if anything */
+ 		return false;
+ 	}
+-	frame_alloc(fmt.fmt.pix.width, fmt.fmt.pix.height);
+-	snprintf(src.name, sizeof(src.name), "%s %dx%d", dev,
+-		fmt.fmt.pix.width, fmt.fmt.pix.height);
++	frame_alloc(bayer ? fh : fw, bayer ? fw : fh);
++	if (bayer) {
++		lens_open();
++		sensor_open();
++		memset(&afc, 0, sizeof(afc));
++		memset(&scene, 0, sizeof(scene));
++		afc.enabled = lens_fd >= 0;
++		afc.since = zmc_now_ms();
++		afc.next = afc.since + AF_INITIAL_MS;
++	}
++	snprintf(src.name, sizeof(src.name), "%s %dx%d", dev, fw, fh);
+ 	return true;
+ }
+ 
+@@ -395,6 +1690,14 @@
+ 			break;
+ 		}
+ 		note("no camera device (%s)", device_path ? device_path : "none given");
++		if (device_path) {
++			/* an explicitly named device that will not open is
++			 * reported, not papered over with the test scene */
++			src.kind = SRC_V4L2;
++			frame_alloc(FRAME_W, FRAME_H);
++			snprintf(src.name, sizeof(src.name), "%s unavailable", device_path);
++			break;
++		}
+ 		/* fall through: a camera app without a picture is a dead end */
+ 	case SRC_SCENE:
+ 		src.kind = SRC_SCENE;
+@@ -633,13 +1936,16 @@
+ 	src.rev++;
+ }
+ 
++/* The white balance dial as gains: the same numbers the scene and a real
++ * picture use. */
++static const double wb_gain[5][3] = { { 1, 1, 1 }, { 1.10, 1.0, 0.86 },
++	{ 1.0, 1.0, 1.05 }, { 0.9, 1.06, 1.0 }, { 1.15, 1.02, 0.80 } };
++
+ /* YUYV to the frame, with what the dials set: gains only — a real camera's
+  * picture is not redrawn, only lit. */
+ static void yuyv_frame(const uint8_t *in) {
+ 	double ev = pow(2.0, (ui.ctl[4] - 6) * 0.5);
+-	static const double wb[5][3] = { { 1, 1, 1 }, { 1.10, 1.0, 0.86 },
+-		{ 1.0, 1.0, 1.05 }, { 0.9, 1.06, 1.0 }, { 1.15, 1.02, 0.80 } };
+-	const double *k = wb[ui.ctl[0]];
++	const double *k = wb_gain[ui.ctl[0]];
+ 	int rg[256], gg[256], bg[256];
+ 	for (int i = 0; i < 256; i++) {
+ 		rg[i] = (int)(i * ev * k[0] * 1.164);
+@@ -672,6 +1978,177 @@
+ 	src.rev++;
+ }
+ 
++/* Packed RAW10 Bayer from the CSI RDI node: four ten-bit pixels in five bytes,
++ * one GRBG cell, no ISP anywhere in the kernel. */
++static int bayer_at(const uint16_t *b, int w, int h, int x, int y) {
++	x = x < 0 ? 0 : x >= w ? w - 1 : x;
++	y = y < 0 ? 0 : y >= h ? h - 1 : y;
++	return b[(size_t)y * w + x];
++}
++
++/* Packed RAW10 Bayer from the CSI RDI node: four ten-bit pixels in five bytes,
++ * one GRBG cell, no ISP anywhere in the kernel. Bilinear demosaic here, the
++ * sensor's black 64 and white 1023 (raw-source.h), the dials' gains, and a slow
++ * stretch so that a picture the sensor has not exposed for yet is still visible
++ * rather than black. It is the same data the kernel handed over; it is not a
++ * test card and it is not a substitute for the sensor's own exposure. */
++static void bayer_frame(const uint8_t *in) {
++	int w = src.h, h = src.w;
++	static uint16_t *b;
++	static size_t cap;
++	if (!b || cap < (size_t)w * h) {
++		free(b);
++		b = malloc((size_t)w * h * sizeof(*b));
++		cap = b ? (size_t)w * h : 0;
++		if (!b) {
++			return;
++		}
++	}
++	for (int y = 0; y < h; y++) {
++		const uint8_t *row = in + (size_t)y * src.stride;
++		uint16_t *o = b + (size_t)y * w;
++		for (int x = 0; x < w; x += 4) {
++			const uint8_t *p = row + (size_t)x / 4 * 5;
++			o[x] = (uint16_t)(p[0] << 2 | (p[4] & 0x03));
++			o[x + 1] = (uint16_t)(p[1] << 2 | (p[4] >> 2 & 0x03));
++			o[x + 2] = (uint16_t)(p[2] << 2 | (p[4] >> 4 & 0x03));
++			o[x + 3] = (uint16_t)(p[3] << 2 | p[4] >> 6);
++		}
++	}
++	if (snr.ready) {
++		sensor_ae(b, w, h);	/* the sensor's own exposure and gain, every few frames */
++	}
++	/* every sixteenth site of a GRBG frame is green: one coarse mean, moved
++	 * slowly, keeps the preview from flashing; the scene-change detector
++	 * reads a normalised histogram of the same sites below */
++	double mean = 0;
++	unsigned hn = 0;
++	for (int y = 0; y < h; y += 16) {
++		for (int x = 0; x < w; x += 16) {
++			mean += b[(size_t)y * w + x];
++			hn++;
++		}
++	}
++	if (hn) {
++		mean /= hn;
++	}
++	bayer_mean = (int)mean;	/* for the focus monitor's dark guard */
++	/* Second pass: the same samples normalised by the mean, so exposure
++	 * changes cancel and only the shape of the scene is compared. */
++	uint16_t nhist[AF_SCENE_BINS] = { 0 };
++	int base2 = (bayer_mean - RAW_BLACK) * 2;
++	if (base2 < 2) {
++		base2 = 2;
++	}
++	for (int y = 0; y < h; y += 16) {
++		for (int x = 0; x < w; x += 16) {
++			int rel = b[y * w + x] - RAW_BLACK;
++			if (rel < 0) {
++				rel = 0;
++			}
++			unsigned bin = (unsigned)(rel * AF_SCENE_BINS / base2);
++			if (bin >= AF_SCENE_BINS) {
++				bin = AF_SCENE_BINS - 1;
++			}
++			nhist[bin]++;
++		}
++	}
++	scene_observe(nhist, hn, bayer_mean);
++	static double stretch = 1;
++	double want = mean > RAW_BLACK + 40 ? 1 : fmin(12, 16 * 1023 / (mean > 1 ? mean : 1));
++	if (snr.ready) {
++		/* the sensor is being exposed: only a little software lift, or the
++		 * preview would double the gain the AE just asked for */
++		want = fmin(want, V4L2_AE_STRETCH);
++	}
++	if (!sweep.active) {
++		stretch += (want - stretch) * 0.25;	/* frozen for a comparable focus sweep */
++	}
++	double ev = pow(2.0, (ui.ctl[4] - 6) * 0.5) * stretch;
++	const double *k = wb_gain[ui.ctl[0]];
++	double auto_gain[3] = { 1, 1, 1 };
++	if (ui.ctl[0] == 0) {
++		double red = 0, green = 0, blue = 0;
++		for (int y = 0; y + 1 < h; y += 16) {
++			for (int x = 0; x + 1 < w; x += 16) {
++				const uint16_t *top = b + (size_t)y * w + x;
++				const uint16_t *bottom = top + w;
++				double g = (top[0] + bottom[1]) * 0.5;
++				if (g < RAW_BLACK + 16 || g > RAW_WHITE - 32 ||
++				    top[1] > RAW_WHITE - 32 || bottom[0] > RAW_WHITE - 32) {
++					continue;
++				}
++				green += g - RAW_BLACK;
++				red += fmax(0, top[1] - RAW_BLACK);
++				blue += fmax(0, bottom[0] - RAW_BLACK);
++			}
++		}
++		if (red > 0 && blue > 0) {
++			auto_gain[0] = fmin(1.8, fmax(0.8, green / red));
++			auto_gain[2] = fmin(1.8, fmax(0.8, green / blue));
++		}
++		k = auto_gain;
++	}
++	uint8_t lut[3][1024];
++	for (int v = 0; v < 1024; v++) {
++		for (int c = 0; c < 3; c++) {
++			double t = (v - RAW_BLACK) * ev * k[c] / (RAW_WHITE - RAW_BLACK);
++			t = t < 0 ? 0 : t > 1 ? 1 : t;
++			t = t <= 0.0031308 ? t * 12.92 : 1.055 * pow(t, 1 / 2.4) - 0.055;
++			lut[c][v] = (uint8_t)(t * 255 + 0.5);
++		}
++	}
++	uint8_t *out = (uint8_t *)cairo_image_surface_get_data(src.frame);
++	int ostride = cairo_image_surface_get_stride(src.frame);
++	/* The frame is already transposed into the portrait surface: input (x,y)
++	 * lands at (col = h-1-y, row = x). The front S5K5E8 is mounted the other
++	 * way up than the rear S5K3L8, so exactly 180 degrees more are needed:
++	 * (col,row) -> (src.w-1-col, src.h-1-row) = (y, src.h-1-x). A pure index
++	 * remap is the same picture as rotating the finished surface, and it is
++	 * the one place every consumer reads: preview, photo (png of src.frame)
++	 * and video recording all take src.frame as written here. */
++	int flip = is_front();
++#define BAY(x, y) bayer_at(b, w, h, (x), (y))
++	for (int y = 0; y < h; y++) {
++		for (int x = 0; x < w; x++) {
++			int c = BAY(x, y), r, g, bl;
++			if (!((x ^ y) & 1)) {
++				g = c;
++				int horiz = (BAY(x - 1, y) + BAY(x + 1, y) + 1) / 2;
++				int vert = (BAY(x, y - 1) + BAY(x, y + 1) + 1) / 2;
++				if (!(y & 1)) {
++					r = horiz;	/* green on red's row */
++					bl = vert;
++				} else {
++					bl = horiz;
++					r = vert;
++				}
++			} else {
++				int diag = (BAY(x - 1, y - 1) + BAY(x + 1, y - 1) +
++					BAY(x - 1, y + 1) + BAY(x + 1, y + 1) + 2) / 4;
++				g = (BAY(x - 1, y) + BAY(x + 1, y) + BAY(x, y - 1) + BAY(x, y + 1) + 2) / 4;
++				if (!(y & 1)) {
++					r = c;		/* red */
++					bl = diag;
++				} else {
++					bl = c;		/* blue */
++					r = diag;
++				}
++			}
++			r = r > RAW_WHITE ? RAW_WHITE : r;
++			g = g > RAW_WHITE ? RAW_WHITE : g;
++			bl = bl > RAW_WHITE ? RAW_WHITE : bl;
++			int row = flip ? src.h - 1 - x : x;
++			int col = flip ? y : h - 1 - y;
++			((uint32_t *)(out + (size_t)row * ostride))[col] = 0xff000000u | (uint32_t)lut[0][r] << 16 |
++				(uint32_t)lut[1][g] << 8 | lut[2][bl];
++		}
++	}
++#undef BAY
++	cairo_surface_mark_dirty(src.frame);
++	src.rev++;
++}
++
+ /* ---- captures ------------------------------------------------------------- */
+ 
+ static struct {
+@@ -705,7 +2182,12 @@
+ 			return;
+ 		}
+ 	} else {
+-		shot = cairo_surface_reference(src.frame);
++		/* Freeze the current frame before the PNG writer runs off-thread. */
++		shot = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, src.w, src.h);
++		cairo_t *cr = cairo_create(shot);
++		cairo_set_source_surface(cr, src.frame, 0, 0);
++		cairo_paint(cr);
++		cairo_destroy(cr);
+ 	}
+ 	time_t now = time(NULL);
+ 	struct tm tm;
+@@ -766,43 +2248,329 @@
+ 	note("saved %s", strrchr(save.path, '/') + 1);
+ }
+ 
++/* ---- the recorder's frame, scaled once before the pipe
++ *
++ * The pipe, not the encoder, was the bottleneck at 1280x720: BGRA at 24 fps is
++ * 86 MB/s through a 212992-byte socket and could not drain, so the encoder was
++ * fed 42 frames over 4 s of life stamped at 15 fps and the clip ran 2.8 s.
++ * The frame is therefore scaled here, once, by one area-average box into the
++ * size the pipe can carry, and the encoder is fed exactly that. Two builds
++ * share this code: REC_SCALE_NUM/DEN = 3/4 with REC_FPS 24 writes 540x960
++ * (49.8 MB/s of BGRA), 1/1 with REC_FPS 15 writes the full 720x1280
++ * (55.3 MB/s). Both keep the same pacer: a late frame is repeated to fill the
++ * clock, never dropped, so a clip of N seconds plays N seconds.
++ */
++static uint8_t *rec_buf;
++static size_t rec_cap;
++static int rec_w, rec_h;
++static int *rec_xmap, *rec_ymap;	/* rec_w+1 / rec_h+1 source edges */
++
++static size_t rec_stride(void) { return (size_t)rec_w * 4; }
++
++static bool rec_alloc(void) {
++	int w = src.w, h = src.h;
++	if (src.kind == SRC_RAW) {
++		/* the raw readback does its own 2x2 box into the half-size buffer */
++		w = src.w & ~1;
++		h = src.h & ~1;
++		if (w >= 128 && h >= 128) {
++			w /= 2;
++			h /= 2;
++		}
++	} else if (REC_SCALE_NUM != REC_SCALE_DEN) {
++		w = (int)((long)src.w * REC_SCALE_NUM / REC_SCALE_DEN) & ~1;
++		h = (int)((long)src.h * REC_SCALE_NUM / REC_SCALE_DEN) & ~1;
++		if (w < 64 || h < 64) {
++			w = src.w & ~1;	/* a tiny source is not worth scaling */
++			h = src.h & ~1;
++		}
++	} else {
++		w = src.w & ~1;
++		h = src.h & ~1;
++	}
++	if (w > src.w) {
++		w = src.w & ~1;
++	}
++	if (h > src.h) {
++		h = src.h & ~1;
++	}
++	size_t need = (size_t)w * h * 4;
++	if (!rec_buf || need > rec_cap) {
++		uint8_t *grown = realloc(rec_buf, need);
++		if (!grown) {
++			return false;
++		}
++		rec_buf = grown;
++		rec_cap = need;
++	}
++	rec_w = w;
++	rec_h = h;
++	int *xmap = NULL, *ymap = NULL;
++	if (src.kind != SRC_RAW && (w != src.w || h != src.h)) {
++		xmap = realloc(rec_xmap, (size_t)(w + 1) * sizeof(int));
++		ymap = realloc(rec_ymap, (size_t)(h + 1) * sizeof(int));
++		if (!xmap || !ymap) {
++			rec_xmap = xmap ? xmap : rec_xmap;
++			rec_ymap = ymap ? ymap : rec_ymap;
++			return false;
++		}
++		rec_xmap = xmap;
++		rec_ymap = ymap;
++		for (int x = 0; x <= w; x++) {
++			rec_xmap[x] = (int)((long)x * src.w / w);
++		}
++		for (int y = 0; y <= h; y++) {
++			rec_ymap[y] = (int)((long)y * src.h / h);
++		}
++	}
++	return true;
++}
++
++/* The sources that already have the picture in src.frame (test scene, replay
++ * file, V4L2 node): BGRA in cairo's memory order, one area-average box from
++ * the picture to the recorder's size. Whole copies take the memcpy path. */
++static void frame_scale(void) {
++	const uint8_t *d = (const uint8_t *)cairo_image_surface_get_data(src.frame);
++	int st = cairo_image_surface_get_stride(src.frame);
++	cairo_surface_flush(src.frame);
++	if (rec_w == src.w && rec_h == src.h) {
++		for (int y = 0; y < rec_h; y++) {
++			memcpy(rec_buf + (size_t)y * rec_stride(), d + (size_t)y * st, rec_stride());
++		}
++		return;
++	}
++	for (int y = 0; y < rec_h; y++) {
++		int sy0 = rec_ymap[y], sy1 = rec_ymap[y + 1];
++		uint32_t *o = (uint32_t *)(rec_buf + (size_t)y * rec_stride());
++		for (int x = 0; x < rec_w; x++) {
++			int sx0 = rec_xmap[x], sx1 = rec_xmap[x + 1];
++			uint32_t r = 0, g = 0, b = 0;
++			int n = 0;
++			for (int sy = sy0; sy < sy1; sy++) {
++				const uint32_t *row = (const uint32_t *)(d + (size_t)sy * st);
++				for (int sx = sx0; sx < sx1; sx++) {
++					uint32_t p = row[sx];
++					r += (p >> 16) & 0xff;
++					g += (p >> 8) & 0xff;
++					b += p & 0xff;
++					n++;
++				}
++			}
++			if (n == 0) {
++				n = 1;
++			}
++			if (n == 4) {
++				r = (r + 2) >> 2; g = (g + 2) >> 2; b = (b + 2) >> 2;
++			} else if (n == 2) {
++				r = (r + 1) >> 1; g = (g + 1) >> 1; b = (b + 1) >> 1;
++			} else if (n != 1) {
++				r /= (uint32_t)n; g /= (uint32_t)n; b /= (uint32_t)n;
++			}
++			o[x] = 0xff000000u | r << 16 | g << 8 | b;
++		}
++	}
++}
++
++static bool record_frame_prepare(void) {
++	if (!rec_buf) {
++		return false;
++	}
++	if (src.kind == SRC_RAW) {
++		return raw_video_grab(rec_buf, (int)rec_stride(), rec_w, rec_h);
++	}
++	if (!src.frame || cairo_surface_status(src.frame) != CAIRO_STATUS_SUCCESS ||
++	    cairo_image_surface_get_width(src.frame) != src.w ||
++	    cairo_image_surface_get_height(src.frame) != src.h ||
++	    rec_w > src.w || rec_h > src.h) {
++		return false;
++	}
++	frame_scale();
++	return true;
++}
++
++static void record_stop(const char *why);
++static bool record_write(const uint8_t *data, size_t len);
++
++/*
++ * The recorder's clock. One frame per 1/REC_FPS of wall clock; when the clock
++ * has slipped, the prepared frame is repeated to fill the gap - repeated, not
++ * dropped, because a dropped frame at a fixed input rate shortens the clip and
++ * a shorter clip plays faster than the recording did. A slip longer than
++ * REC_FILL_SLOTS is not flushed as one burst (that would stall the viewfinder
++ * in frame_arrived): the schedule is re-phased and the slots are counted, so
++ * the log shows a dead encoder instead of silent fast motion.
++ */
++static bool record_tick(void) {
++	uint32_t now = zmc_now_ms();
++	if ((int32_t)(now - ui.rec_next) < 0) {
++		return true;	/* not this frame's turn: dropped, never queued */
++	}
++	unsigned slots = (unsigned)((now - ui.rec_next) / REC_PERIOD_MS) + 1;
++	if (slots > REC_FILL_SLOTS) {
++		ui.rec_skipped += slots - REC_FILL_SLOTS;
++		slots = REC_FILL_SLOTS;
++	}
++	if (!record_frame_prepare()) {
++		record_stop("no frame to write");
++		return false;
++	}
++	size_t len = rec_stride() * (size_t)rec_h;
++	for (unsigned i = 0; i < slots; i++) {
++		uint32_t began = zmc_now_ms();
++		if (!record_write(rec_buf, len)) {
++			record_stop("encoder stalled");
++			return false;
++		}
++		uint32_t took = zmc_now_ms() - began;
++		if (took > ui.rec_worst_ms) {
++			ui.rec_worst_ms = took;
++		}
++		ui.rec_written++;
++		if (i) {
++			ui.rec_repeated++;
++		}
++	}
++	now = zmc_now_ms();
++	ui.rec_next += slots * REC_PERIOD_MS;
++	if ((int32_t)(now - ui.rec_next) >= 0) {	/* still behind: drop the debt */
++		ui.rec_skipped += (now - ui.rec_next) / REC_PERIOD_MS + 1;
++		ui.rec_next = now + REC_PERIOD_MS;
++	}
++	if (now - ui.rec_start >= REC_MAX_MS) {
++		record_stop("time limit reached");
++		return false;
++	}
++	return true;
++}
++
+ static void record_start(void) {
++	if (!rec_alloc()) {
++		note("cannot start video: out of memory");
++		return;
++	}
+ 	time_t now = time(NULL);
+ 	struct tm tm;
+ 	localtime_r(&now, &tm);
+-	snprintf(ui.rec_path, sizeof(ui.rec_path), "%s/VID_%02d%02d%02d_%02d%02d%02d.bgra",
++	snprintf(ui.rec_path, sizeof(ui.rec_path), "%s/VID_%02d%02d%02d_%02d%02d%02d.mkv",
+ 		roll_dir, tm.tm_year % 100, tm.tm_mon + 1, tm.tm_mday,
+ 		tm.tm_hour, tm.tm_min, tm.tm_sec);
+-	ui.rec_fd = open(ui.rec_path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+-	if (ui.rec_fd < 0) {
+-		note("cannot record: %s", strerror(errno));
++	char size[32], rate[8], crf[8], maxrate[16];
++	snprintf(size, sizeof(size), "%dx%d", rec_w, rec_h);
++	snprintf(rate, sizeof(rate), "%d", REC_FPS);
++	snprintf(crf, sizeof(crf), "%d", REC_CRF);
++	snprintf(maxrate, sizeof(maxrate), "%dk", REC_MAXRATE_KBPS);
++	fprintf(stderr, "ztcamera: video %dx%d at %d fps, crf %d, maxrate %dk\n",
++		rec_w, rec_h, REC_FPS, REC_CRF, REC_MAXRATE_KBPS);
++	int stream[2];
++	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, stream) < 0) {
++		note("cannot start video: %s", strerror(errno));
++		return;
++	}
++	pid_t pid = fork();
++	if (pid == 0) {
++		close(stream[0]);
++		if (dup2(stream[1], STDIN_FILENO) < 0) _exit(126);
++		close(stream[1]);
++		execlp("ffmpeg", "ffmpeg", "-nostdin", "-loglevel", "error", "-n",
++			"-f", "rawvideo", "-pix_fmt", "bgra", "-video_size", size,
++			"-framerate", rate, "-i", "pipe:0", "-an",
++			/* no scaling here any more: frame_scale() sized the frame */
++			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
++			"-threads", "4", "-pix_fmt", "yuv420p", "-crf", crf,
++			"-maxrate", maxrate, "-bufsize", maxrate,
++			ui.rec_path, (char *)NULL);
++		_exit(127);
++	}
++	close(stream[1]);
++	if (pid < 0) {
++		close(stream[0]);
++		note("cannot start video: %s", strerror(errno));
+ 		return;
+ 	}
++	ui.rec_fd = stream[0];
++	ui.rec_pid = pid;
+ 	ui.recording = true;
+-	ui.rec_start = ui.rec_last_write = zmc_now_ms();
+-	ui.rec_bytes = 0;
++	ui.rec_start = ui.rec_next = zmc_now_ms();
++	ui.rec_written = ui.rec_repeated = ui.rec_skipped = ui.rec_worst_ms = 0;
+ 	zmc_haptic("heavy");
+ 	chrome_redraw_mark();
+ }
+ 
+ static void record_stop(const char *why) {
+-	if (!ui.recording) {
+-		return;
+-	}
++	if (!ui.recording) return;
+ 	ui.recording = false;
+-	if (ui.rec_fd >= 0) {
+-		close(ui.rec_fd);
+-		ui.rec_fd = -1;
+-	}
++	close(ui.rec_fd);
++	ui.rec_fd = -1;
++	int status = 0;
++	pid_t result = 0;
++	/* Closing the pipe is the end of the input, and the trailer (with the
++	 * file's index) is written after it. Killing the encoder at that moment
++	 * leaves an mkv that ffprobe reads as truncated, so wait for it to
++	 * finish; only a hung one is signalled. */
++	for (int waited = 0; waited < 2000; waited += 10) {
++		result = waitpid(ui.rec_pid, &status, WNOHANG);
++		if (result != 0) break;
++		usleep(10000);
++	}
++	if (result == 0) {
++		kill(ui.rec_pid, SIGTERM);
++		for (int waited = 0; waited < 500; waited += 10) {
++			result = waitpid(ui.rec_pid, &status, WNOHANG);
++			if (result != 0) break;
++			usleep(10000);
++		}
++	}
++	if (result == 0) {
++		kill(ui.rec_pid, SIGKILL);
++		while (waitpid(ui.rec_pid, &status, 0) < 0 && errno == EINTR) {}
++	}
++	ui.rec_pid = 0;
++	fprintf(stderr, "ztcamera: video %s: %u frames (%.1f s at %d fps), %u repeated, "
++		"%u skipped, worst frame write %u ms\n", ui.rec_path, ui.rec_written,
++		(double)ui.rec_written / REC_FPS, REC_FPS, ui.rec_repeated, ui.rec_skipped,
++		ui.rec_worst_ms);
+ 	roll_scan();
+-	note("%s %.1f MB — ffmpeg -f rawvideo -pix_fmt bgra -s %dx%d %s",
+-		why ? why : "recorded", ui.rec_bytes / 1048576.0, src.w, src.h, ui.rec_path);
++	if (result > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0)
++		note("%s: %s", why ? why : "recorded", ui.rec_path);
++	else
++		note("video encoder failed");
+ 	chrome_redraw_mark();
+ }
+ 
++/*
++ * One whole frame at a time. The rawvideo reader in the encoder takes a short
++ * read as a corrupt packet ("Invalid buffer size ... < expected frame_size")
++ * and throws the whole input away, so a frame is never left half written: the
++ * write waits for the encoder to drain, and only gives up when the encoder is
++ * gone or the budget is spent.
++ */
++static bool record_write(const uint8_t *data, size_t len) {
++	uint32_t deadline = zmc_now_ms() + REC_WRITE_MS;
++	while (len) {
++		ssize_t got = send(ui.rec_fd, data, len, MSG_NOSIGNAL | MSG_DONTWAIT);
++		if (got > 0) {
++			data += got;
++			len -= (size_t)got;
++			continue;
++		}
++		if (got < 0 && errno == EINTR) continue;
++		if (got < 0 && errno != EAGAIN && errno != EWOULDBLOCK) return false;
++		int left = (int)(deadline - zmc_now_ms());
++		if (left <= 0) return false;
++		struct pollfd writable = { .fd = ui.rec_fd, .events = POLLOUT };
++		int n = poll(&writable, 1, left);
++		if (n < 0 && errno != EINTR) return false;
++		if (n > 0 && (writable.revents & (POLLERR | POLLHUP | POLLNVAL))) return false;
++	}
++	return true;
++}
++
+ /* every new frame passes here: counted, and written out while recording */
+ static void frame_arrived(void) {
+ 	ui.frames++;
++	if (sweep.active) {
++		focus_sweep_frame(zmc_now_ms());
++	}
+ 	uint32_t now = zmc_now_ms();
+ 	if (now - ui.fps_clock >= 1000) {
+ 		ui.fps = (int)(ui.frames * 1000 / (now - ui.fps_clock));
+@@ -810,24 +2578,8 @@
+ 		ui.fps_clock = now;
+ 		chrome_redraw_mark();
+ 	}
+-	if (ui.recording && now - ui.rec_last_write >= 1000 / REC_FPS) {
+-		const uint8_t *data = cairo_image_surface_get_data(src.frame);
+-		size_t left = (size_t)cairo_image_surface_get_stride(src.frame) * src.h;
+-		while (left) {
+-			ssize_t got = write(ui.rec_fd, data, left);
+-			if (got < 0 && errno == EINTR) continue;
+-			if (got <= 0) {
+-				record_stop("recording failed");
+-				return;
+-			}
+-			ui.rec_bytes += got;
+-			data += got;
+-			left -= got;
+-		}
+-		ui.rec_last_write = now;
+-		if (ui.rec_bytes >= REC_MAX_BYTES) {
+-			record_stop("cap reached");
+-		}
++	if (ui.recording) {
++		record_tick();
+ 	}
+ }
+ 
+@@ -1066,7 +2818,7 @@
+ 
+ 	/* focus: the brackets come in while the shutter is held, and take the
+ 	 * accent when they lock */
+-	if (ui.focusing || ui.focused) {
++	if (ui.focusing || ui.focused || sweep.active) {
+ 		double cx = zmc.width / 2, cy = zmc.height / 2, s = ui.focused ? 46 : 58;
+ 		zmc_set_rgb(cr, ui.focused ? zmc.accent : 0xffffff);
+ 		cairo_set_line_width(cr, 2.4);
+@@ -1354,7 +3106,7 @@
+ 		cairo_stroke(cr);
+ 		if (ctl_n[c] <= 7) {	/* few enough to name each stop */
+ 			char lb[24];
+-			snprintf(lb, sizeof(lb), "%s", ctl_opts[c][i]);
++			snprintf(lb, sizeof(lb), "%s", control_label(c, i));
+ 			cairo_set_source_rgba(cr, 1, 1, 1, sel ? 1.0 : 0.55);
+ 			double lr = DIAL_R + 20;
+ 			double lx = cx + lr * cos(a), ly = cy + lr * sin(a);
+@@ -1369,7 +3121,7 @@
+ 		cairo_set_source_rgba(cr, 1, 1, 1, 0.6);
+ 		zmc_text(cr, ctl_name[c], FONT_REGULAR, 11.5, vx, cy - 58, 0);
+ 		cairo_set_source_rgb(cr, 1, 1, 1);
+-		zmc_text(cr, ctl_opts[c][ui.ctl[c]], FONT_LIGHT, 40, vx, cy - 40, 0);
++		zmc_text(cr, control_label(c, ui.ctl[c]), FONT_LIGHT, 40, vx, cy - 40, 0);
+ 		cairo_set_source_rgba(cr, 1, 1, 1, 0.5);
+ 		zmc_text(cr, "drag round the arc", FONT_REGULAR, 10, vx, cy + 4, 0);
+ 	}
+@@ -1535,8 +3287,90 @@
+ 	}
+ }
+ 
++/* Front/rear on the live graph is an in-process switch. The setup service
++ * (ugglite-camera-paths, run at boot or once by hand) leaves BOTH CAMSS routes
++ * enabled and formatted:
++ *   rear  csiphy0 -> csid0 -> ispif0 -> vfe0_rdi0 -> video node
++ *   front csiphy1 -> csid1 -> ispif1 -> vfe0_rdi1 -> video node
++ * and writes their node names to /run/ugglite-camera-paths. So this process
++ * only closes the current V4L2 fd and opens the other node: no _exit, no
++ * launcher, no window restart, and the UI (dials, note, recording state) is
++ * the same window throughout. The privileged media-link setup is never done
++ * by the app; the helpers remain for capture, fallback and desktop use. */
++#define FACING_DEBOUNCE_MS	700
++#define FACING_SWITCH_SETTLE_MS	450
++
++static bool facing_deaf(void) {
++	return ui.started_ms &&
++		(uint32_t)(zmc_now_ms() - ui.started_ms) < FACING_DEBOUNCE_MS;
++}
++
++static bool facing_settling(void) {
++	return ui.facing_ms &&
++		(uint32_t)(zmc_now_ms() - ui.facing_ms) < FACING_SWITCH_SETTLE_MS;
++}
++
++/* Close one fd and open the other; the media graph is already up. Every failure
++ * path restores the previous node and source, so a missing path leaves the
++ * window showing the camera it had instead of an empty screen. */
++static void camera_switch_inprocess(void) {
++	bool want_front = !is_front();
++	const char *want = want_front ? front_dev : rear_dev;
++	if (!want || !*want) {
++		note("camera: no %s path configured", want_front ? "front" : "rear");
++		return;
++	}
++	if (device_path && !strcmp(device_path, want)) {
++		/* the path is already the one the button asks for */
++		front_cam = want_front;
++		ui.front = want_front;
++		return;
++	}
++	if (access(want, R_OK | W_OK) != 0) {
++		note("camera: %s is not ready (%s)", want, strerror(errno));
++		return;
++	}
++	const char *was_path = device_path;
++	bool was_front = is_front();
++	bool was_ui = ui.front;
++	device_path = want;
++	front_cam = want_front;
++	ui.front = want_front;
++	fprintf(stderr, "ztcamera: in-process switch %s -> %s\n",
++		was_path ? was_path : "none", want);
++	source_start(SRC_V4L2);
++	if (src.kind == SRC_V4L2 && src.fd >= 0) {
++		ui.facing_ms = zmc_now_ms();
++		note("%s camera", want_front ? "front" : "rear");
++		chrome_redraw_mark();
++		return;
++	}
++	/* put the old node back: the user keeps a picture, not a black window */
++	fprintf(stderr, "ztcamera: switch to %s failed; back to %s\n",
++		want, was_path ? was_path : "test scene");
++	device_path = was_path;
++	front_cam = was_front;
++	ui.front = was_ui;
++	if (was_path) {
++		source_start(SRC_V4L2);
++	} else {
++		source_start(SRC_SCENE);
++	}
++	note("camera: could not open %s", want);
++}
++
+ static void facing_toggle(void) {
+ 	static bool ir_parked;	/* IR has no picture yet: the test scene shows, the next tap is rear */
++	if (facing_deaf()) {
++		fprintf(stderr, "ztcamera: facing tap ignored, %u ms after the window appeared\n",
++			(unsigned)(zmc_now_ms() - ui.started_ms));
++		return;
++	}
++	if (facing_settling()) {
++		fprintf(stderr, "ztcamera: facing tap ignored, %u ms after the camera switch\n",
++			(unsigned)(zmc_now_ms() - ui.facing_ms));
++		return;
++	}
+ 	if (src.kind == SRC_RAW || ir_parked) {
+ 		/* rear, front, IR, each from the one before */
+ 		raw.cam = ir_parked ? RAW_REAR : raw.cam == RAW_REAR ? RAW_FRONT : RAW_IR;
+@@ -1545,6 +3379,14 @@
+ 		source_start(SRC_RAW);
+ 		return;
+ 	}
++	if (src.kind == SRC_V4L2) {
++		if (ui.recording) {
++			note("stop recording before changing camera");
++			return;
++		}
++		camera_switch_inprocess();
++		return;
++	}
+ 	if (src.kind != SRC_SCENE) {
+ 		note("front/rear selection is available in test scene only");
+ 		return;
+@@ -1616,6 +3458,10 @@
+ 	static enum hit down = HIT_NONE;
+ 	static int ctl_i, menu_i;
+ 	static double down_x, down_y, last_x, last_y;
++	/* A press on the facing button that lands while the window is still fresh
++	 * belongs to the handover, not to the user: the lift is dropped with it,
++	 * even if the finger rests past FACING_DEBOUNCE_MS. */
++	static bool facing_swallow;
+ 	/* Wayland touch-up has no coordinates; retain the last finger position. */
+ 	if (phase == 0 || phase == 1) {
+ 		last_x = x;
+@@ -1626,6 +3472,7 @@
+ 	}
+ 	if (phase == 0) {
+ 		down = hit_at(x, y);
++		facing_swallow = down == HIT_FACING && facing_deaf();
+ 		down_x = x;
+ 		down_y = y;
+ 		ctl_i = menu_i = -1;
+@@ -1648,13 +3495,12 @@
+ 				ui.dial_angle += 360;
+ 			}
+ 			int v = dial_index_at(c, x, y);
+-			if (v != ui.ctl[c]) {
+-				ui.ctl[c] = v;
++			if (v != ui.ctl[c] && control_set(c, v)) {
+ 				zmc_haptic("tick");
+ 			}
+ 		} else if (down == HIT_SHUTTER && ui.mode == MODE_PHOTO) {
+ 			ui.shutter_at = time;
+-			ui.focusing = true;
++			ui.focusing = !src.bayer;
+ 			ui.focused = false;
+ 			ui.focus_at = time;
+ 			chrome_redraw_mark();
+@@ -1669,8 +3515,7 @@
+ 			ui.dial_angle += 360;
+ 		}
+ 		int v = dial_index_at(c, x, y);
+-		if (v != ui.ctl[c]) {
+-			ui.ctl[c] = v;
++		if (v != ui.ctl[c] && control_set(c, v)) {
+ 			zmc_haptic("tick");
+ 		}
+ 		return true;
+@@ -1732,6 +3577,11 @@
+ 		}
+ 		break;
+ 	case HIT_FACING:
++		if (!off && facing_swallow) {
++			facing_swallow = false;
++			break;	/* the tap that showed this window, not a new one */
++		}
++		facing_swallow = false;
+ 		if (!off) {
+ 			facing_toggle();
+ 			zmc_haptic("tap");
+@@ -1781,6 +3631,8 @@
+ 		} else if (ui.timer_left > 0) {
+ 			ui.timer_left = -1;	/* a tap cancels the self-timer */
+ 			chrome_redraw_mark();
++		} else if (!ui.reviewing && !moved) {
++			focus_sweep_start(false);	/* the view itself is the focus button */
+ 		}
+ 		break;
+ 	default:
+@@ -1807,6 +3659,12 @@
+ 			chrome_redraw_mark();
+ 		}
+ 	}
++	if (sweep.active && now - sweep.started > FOCUS_SWEEP_TIMEOUT_MS + 1000) {
++		focus_sweep_cancel("focus: sweep stalled");	/* frames stopped coming */
++	}
++	if (src.kind == SRC_V4L2) {
++		v4l2_af_tick(now);	/* AF-S at open, then only on a soft picture */
++	}
+ 	if (ui.focusing && !ui.focused && now - ui.focus_at > 550) {
+ 		ui.focusing = false;
+ 		ui.focused = true;
+@@ -1856,18 +3714,40 @@
+ }
+ 
+ static void v4l2_ready(int fd, void *data) {
++	struct v4l2_plane plane[1];	/* one plane, whether the node is single or multi */
+ 	struct v4l2_buffer b;
+ 	memset(&b, 0, sizeof(b));
+-	b.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
++	memset(plane, 0, sizeof(plane));
++	b.type = src.mplane ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE :
++		V4L2_BUF_TYPE_VIDEO_CAPTURE;
+ 	b.memory = V4L2_MEMORY_MMAP;
++	if (src.mplane) {
++		b.length = 1;
++		b.m.planes = plane;
++	}
+ 	if (ioctl(fd, VIDIOC_DQBUF, &b) != 0) {
+ 		return;
+ 	}
+-	if (b.index >= (unsigned)src.nbuf) return;
+-	if (!(b.flags & V4L2_BUF_FLAG_ERROR) &&
+-			b.bytesused >= src.stride * src.h &&
+-			src.buf[b.index].len >= src.stride * src.h) {
+-		yuyv_frame((const uint8_t *)src.buf[b.index].start);
++	if (b.index >= (unsigned)src.nbuf) {
++		return;
++	}
++	size_t need = src.stride * (src.bayer ? src.w : src.h);
++	size_t used = src.mplane ? plane[0].bytesused : b.bytesused;
++	size_t off = src.mplane ? plane[0].data_offset : 0;
++	/* the frame starts at data_offset, and both ends must sit inside what the
++	 * driver says it wrote and inside the mapping */
++	if (!(b.flags & V4L2_BUF_FLAG_ERROR) && off <= used &&
++			used - off >= need && src.buf[b.index].len >= off + need) {
++		const uint8_t *at = (const uint8_t *)src.buf[b.index].start + off;
++		if (src.bayer) {
++			bayer_frame(at);
++		} else {
++			yuyv_frame(at);
++		}
++	}
++	if (src.mplane) {
++		b.length = 1;
++		b.m.planes = plane;
+ 	}
+ 	ioctl(fd, VIDIOC_QBUF, &b);
+ 	frame_arrived();
+@@ -1910,6 +3790,14 @@
+ 	if (src.kind == SRC_SCENE) {
+ 		snprintf(src.name, sizeof(src.name), "test scene 640x480");
+ 	}
++	/* The window is up and its source is starting: input is processed from
++	 * here on, so this is the moment the facing debounce counts from. It must
++	 * sit after source_start(): a slow V4L2 open would otherwise eat the whole
++	 * debounce window before the first touch is even read. Only the first
++	 * arrival arms it; a later page change must not swallow a real tap. */
++	if (!ui.started_ms) {
++		ui.started_ms = zmc_now_ms();
++	}
+ 	zmc_every(FPS_MS, tick);
+ }
+ 
+@@ -1974,14 +3862,18 @@
+ 	fprintf(stderr,
+ 		"ztcamera: the camera, in the Lumia Camera look\n"
+ 		"\n"
+-		"  ztcamera [--device /dev/videoN] [--replay FILE [--size WxH] [--rate R]]\n"
++		"  ztcamera [--device /dev/videoN [--front]] [--replay FILE [--size WxH] [--rate R]]\n"
+ 		"  ztcamera --render OUT.png [dial 0-4]\n"
+ 		"\n"
+ 		"Without --device or --replay it draws its own test scene, which the\n"
+-		"manual controls (exposure, white balance, ISO, shutter, focus) drive.\n");
++		"manual controls (exposure, white balance, ISO, shutter, focus) drive.\n"
++		"--front marks the front camera (the S5K5E8): the picture is turned 180\n"
++		"degrees and the facing button switches to the other already-configured\n"
++		"camera path in this same window (no restart).\n");
+ }
+ 
+ int main(int argc, char **argv) {
++	camera_paths_load();
+ 	const char *home = getenv("HOME");
+ 	snprintf(roll_dir, sizeof(roll_dir), "%s/Pictures/" ROLL_DIR, home ? home : ".");
+ 	char pics[240];
+@@ -1999,6 +3891,8 @@
+ 			sscanf(argv[++i], "%dx%d", &replay_w, &replay_h);
+ 		} else if (!strcmp(argv[i], "--rate") && i + 1 < argc) {
+ 			replay_rate = atof(argv[++i]);
++		} else if (!strcmp(argv[i], "--front")) {
++			front_cam = true;
+ 		} else if (!strcmp(argv[i], "--render") && i + 1 < argc) {
+ 			out_png = argv[++i];
+ 		} else if (!strcmp(argv[i], "dial") && i + 1 < argc) {
+@@ -2015,9 +3909,11 @@
+ 		if (dial_arg < -1 || dial_arg >= N_CONTROLS) return 2;
+ 		return render_png(out_png, dial_arg);
+ 	}
+-	if (!device_path && !replay_path && access("/dev/video0", R_OK | W_OK) == 0) {
+-		device_path = "/dev/video0";
++	if (!device_path && !replay_path && access(rear_dev, R_OK | W_OK) == 0) {
++		device_path = rear_dev;
+ 	}
++	/* the live front path is upside down, and the status line says so */
++	ui.front = is_front();
+ 	int status = zmc_run(&camera, 0);
+ 	record_stop(NULL);
+ 	source_stop();

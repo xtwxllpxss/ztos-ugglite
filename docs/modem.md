@@ -6,8 +6,8 @@ driver, an `active` unit or `rc=0` is not a working modem.
 
 ## Verified on hardware
 
-After a RAM boot of the installed direct-root system (`/ztos-root` on userdata
-ext4), the modem comes up without Android and without flashing anything:
+On the persistent install (lk2nd + the ztOS boot slot; ztOS root `/ztos-root` on
+internal ext4), the modem comes up without Android:
 
 - `qcom_q6v5_mss` runs the MSS firmware; `qcom_bam_dmux` binds and provides the
   DMUX channels.
@@ -20,8 +20,19 @@ ext4), the modem comes up without Android and without flashing anything:
   device owner confirmed the operator name and bars on screen. This is the UI
   level only.
 
-Not verified: data session/APN, SMS, calls, call audio, GNSS, mobile data
-handover with Wi-Fi. Do not read "registered" as "usable cellular data".
+- **Accepted consumers.** An incoming call produced the ringtone, the call
+  screen, an answer and voice in both directions; the device owner accepted it.
+  SMS reception imports messages into ztOS. Data off/on and autoconnect are
+  accepted. The call/audio routing is the `Voice Call` UCM verb published under
+  `devices/xiaomi-ugglite/audio/`.
+- **GNSS engine.** Enabling `gps-raw`/`gps-nmea` produces NMEA; a satellite was
+  received (SNR 31). No fix indoors is expected. No user-space client is
+  installed yet.
+
+Not yet verified: data session/APN and WWAN traffic (the tariff uses
+allow-lists), outgoing calls, SMS sending (RP cause 38; an FDN lock is enabled
+on the SIM and is the leading candidate), VoLTE, mobile-data handover with
+Wi-Fi. Do not read "registered" as "usable cellular data".
 
 ## EFS / NV scope
 
@@ -114,7 +125,7 @@ in `LICENSES/`.
 The RTC is only read: system time is corrected at boot, and the offset is saved at
 shutdown.
 
-Verified in a functional run after a RAM reboot: with NTP masked, `NTP=no`,
+Verified in a functional run after a reboot: with NTP masked, `NTP=no`,
 `NTPSynchronized=no` and `swclock boot rc=0`, system time still matched the host
 within about a second. NTP was then unmasked and resynchronised.
 

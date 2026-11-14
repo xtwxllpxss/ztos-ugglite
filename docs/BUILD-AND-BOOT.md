@@ -99,7 +99,15 @@ choice belongs to whoever builds.
 
 ## Boot
 
-Host-assisted, RAM-only:
+The reference device is installed persistently. The boot slot carries lk2nd
+followed by a ztOS payload written once, and ztOS runs from an internal ext4
+root, so host-free reboots reach ztOS. The stock boot image was backed up on the
+host for rollback (outside this repository). This repository ships **no
+installer and no flashing recipe**: do not repeat that one-time write from these
+files (see [safety.md](safety.md)).
+
+For testing a different kernel or DT without touching the slot, the RAM path is
+still the only documented one:
 
 ```sh
 # candidate image built from the pinned kernel + assembled root
@@ -112,7 +120,7 @@ dtb/second stage), which is how every display/UI candidate was made and rolled
 back. lk2nd (`lk2nd-msm8952-23.1`) is the first stage and can itself be loaded
 with `fastboot boot` before booting the candidate.
 
-There is no default path that flashes a partition, no fallback to Android boot,
+There is no recipe here that flashes a partition, no fallback to Android boot,
 and no image with an unconditional `reboot -f` timer. The 120 s `reboot -f`
 diagnostic image that existed during display bring-up is not published and is
 not referenced by any recipe here.
@@ -133,6 +141,9 @@ not referenced by any recipe here.
    the pinned upstream and matched the accepted source SHA256.
 4. **No installer, no recovery, no rollback image.** Publishing one is a
    separate scope (it writes `userdata`); only the architecture and parameters
-   are described.
+   are described. The reference install was done by hand: the boot slot was
+   written once and ztOS lives on internal storage; the rollback is the stock
+   boot image backed up outside this repository (not published). No published
+   script reproduces that write.
 5. **`fixups.sh` correctness is unverified against a fresh 2026 Arch Linux ARM
    tree** — it was written for the tree that was assembled in October 2026.

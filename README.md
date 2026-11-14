@@ -20,9 +20,9 @@ are still unverified or broken.
 | Boot, persistent (lk2nd + ztOS boot slot) | works — host-free reboots; stock boot image backed up for rollback |
 | Boot, RAM candidates (`fastboot boot`) | works — tests a kernel/DT without touching the slot |
 | Display, baseline | works — confirmed by the device owner |
-| Display brightness | Working on the accepted RAM build with preserved DSI video clocks. The owner confirmed smooth adjustment without frame shift |
+| Display brightness | Works on the accepted persistent install with preserved DSI video clocks. The owner confirmed smooth adjustment without frame shift |
 | Wi-Fi | associates and passes traffic; rate/throughput under load not fixed |
-| Audio | speaker playback and incoming-call audio accepted (RX1/RX2 at 104, louder without distortion); idle hiss remains. Microphone is quiet, gain candidates not accepted |
+| Audio | speaker playback and incoming-call audio accepted (RX1/RX2 at 104 in the accepted gain test; the installed verb writes 120, +36 dB, louder without distortion); idle hiss remains. Microphone is quiet, gain candidates not accepted |
 | RTC write | **unsafe — do not attempt**; root cause not established |
 | Modem | LTE registration and the UI indicator work; **incoming calls and call audio are accepted**, SMS reception imports messages, data on/off and autoconnect are accepted; outgoing calls untested, SMS sending fails (RP cause 38), WWAN data unverified (tariff allow-list) — [docs/modem.md](docs/modem.md) |
 | GNSS | modem GPS engine verified (NMEA output, satellite received with SNR 31); no user-space client installed yet |
@@ -49,7 +49,7 @@ devices/xiaomi-ugglite/
   patches/                    patch series, see SERIES.md
   camera/                     rear CSI/DT fragments
   front-camera/               S5K5E8 out-of-tree driver, install kit, DT delta
-  audio/                      UCM (HiFi.conf) for the qdsp6 speaker/headphone path
+  audio/                      UCM (HiFi.conf, VoiceCall.conf) for the qdsp6 speaker and voice-call paths
   units/                      touch-key nav mapper and its systemd unit
   torch/                      rear-flash DT fragment, udev rule, helper, install kit
 build-environment/
@@ -64,10 +64,11 @@ MAP.md                        every working component → path, or why excluded
 LICENSES/, NOTICE.md          full licence texts and per-area scope
 ```
 
-Patch series: six userspace deltas and two kernel source deltas, documented in
-`SERIES.md` order. `SERIES.md` "One authority" says which copies are the series
-and which are historical mirrors. `patches/**/experimental/` is not part of the
-default series and is not a feature claim.
+Patch series: six `ztmetro` userspace deltas, one composed camera-application
+delta and two kernel source deltas, documented in `SERIES.md` order. `SERIES.md`
+"One authority" says which copies are the series and which are historical
+mirrors. `patches/**/experimental/` is not part of the default series and is not
+a feature claim.
 
 ## Reproducing a build
 

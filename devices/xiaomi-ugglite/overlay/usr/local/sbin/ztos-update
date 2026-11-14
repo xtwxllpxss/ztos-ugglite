@@ -1,6 +1,4 @@
 #!/bin/sh
-# SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
-# SPDX-License-Identifier: GPL-3.0-or-later
 # ztos-update: ztOS's software updater (run as root, by its services).
 #
 #   ztos-update check    fetch the package lists; what can be updated goes to
@@ -74,7 +72,9 @@ apply)
 	status downloading
 	n=0
 	# pacman says "(  3/120) upgrading name" as it goes: that is the progress
-	pacman -Su --noconfirm 2>&1 | tee -a "$LOG" | while IFS= read -r line; do
+	# -Syu, not -Su: the DB may be as old as the last check, and Arch does not
+	# support a partial upgrade; refresh and upgrade in the same transaction.
+	pacman -Syu --noconfirm 2>&1 | tee -a "$LOG" | while IFS= read -r line; do
 		case "$line" in
 		*"("*/*")"*" upgrading "*|*"("*/*")"*" installing "*)
 			k=$(printf '%s' "$line" | sed -n 's/^ *( *\([0-9]*\)\/\([0-9]*\)).*/\1/p')

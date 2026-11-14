@@ -8,10 +8,12 @@ headphone jack is the same pair without the amp switch. Capture is
 | File | Installed path |
 |---|---|
 | `HiFi.conf` | `/usr/share/alsa/ucm2/xiaomi-ugg/HiFi.conf` |
+| `VoiceCall.conf` | `/usr/share/alsa/ucm2/xiaomi-ugg/VoiceCall.conf` |
 | `xiaomi-ugg.conf` | `/usr/share/alsa/ucm2/conf.d/xiaomi-ugg/xiaomi-ugg.conf` |
 
-`xiaomi-ugg.conf` makes the verb discoverable as the `HiFi` use case; without
-it the card falls back to whatever UCM the distribution ships for qdsp6.
+`xiaomi-ugg.conf` makes the verbs discoverable as the `HiFi` and `Voice Call`
+use cases; without it the card falls back to whatever UCM the distribution
+ships for qdsp6.
 
 ## Gain contract
 
@@ -50,6 +52,22 @@ enabled at 150 Hz. Neither is written by this UCM.
 
 `SectionDevice."Mic"` carries routing and capabilities only; its per-stream
 sequence stays empty for the same reason as the playback devices.
+
+## Voice call
+
+`VoiceCall.conf` is the `Voice Call` use case. The modem <-> DSP stream is the
+hostless `VoiceMMode1` front end, opened by the call daemon (`q6voiced`, or the
+`q6voice-hold` helper when it is absent) on `hw:0,6`; the verb only describes
+the routing around it:
+
+- downlink `VoiceMMode1 -> PRI_MI2S_RX -> RX1 -> EAR_S` (earpiece);
+- uplink `AMIC -> CIC1 -> DEC1/ADC1 -> TERT_MI2S_TX -> VoiceMMode1`.
+
+It writes the same accepted microphone contract as `HiFi.conf` (`ADC1 Volume 6`)
+and leaves `RX1/RX2 Digital Volume` at 120, so a call does not undo the
+playback gain. An incoming call with ringtone, call screen, answer and voice in
+both directions was accepted by the device owner. The call daemon itself is not
+published here.
 
 ## Mixer vs sink volume
 

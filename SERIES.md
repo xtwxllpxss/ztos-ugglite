@@ -5,9 +5,12 @@ reconstruction, and nothing was dropped for "not applying to clean upstream".
 
 ## One authority
 
-`patches/userspace/ztmetro/0001`–`0006` is the **only** series to apply. The
-copies under `devices/xiaomi-ugglite/patches/` are historical mirrors kept for
-the device-layer release that already shipped them; do not apply both, or 0001,
+`patches/userspace/ztmetro/0001`–`0006` is the **only** ztmetro series to apply.
+`patches/userspace/ztcamera/0001` is a single composed camera-application delta
+with its own section below; it is not part of the ztmetro series and not applied
+by `build-environment/prepare-userspace.sh`. The copies under
+`devices/xiaomi-ugglite/patches/` are historical mirrors kept for the
+device-layer release that already shipped them; do not apply both, or 0001,
 0002, 0003 and the haptic hunk land twice. For the Wi-Fi kernel delta,
 `patches/kernel/0001` is the only source — `devices/…/wcn36xx-start-rate-0.patch`
 is its working copy, not a second patch to stack on top.
@@ -81,6 +84,33 @@ accepted tree — which is exactly what the table above reconstructs.
   exactly `ztmetro/core/ztos-hw.h` and `ztmetro/settings/ztsettings.c`.
 - `experimental/zrnvibe-ff-rumble.patch` has no accepted-build evidence in this
   pass and stays out of the series.
+
+## Userspace — camera application `ztcamera` (composed delta, not a series)
+
+Target: `ztmetro/camera/ztcamera.c` at the same upstream pin (`94b35c2a`). This
+is one composed delta that reconstructs the accepted camera-application source;
+it is not a linear series, and `build-environment/prepare-userspace.sh` does not
+apply it (that script reads only `patches/userspace/ztmetro/000[1-6]-*.patch`).
+From the root of the pinned ztOS checkout:
+
+```sh
+git apply patches/userspace/ztcamera/0001-ztcamera-ugglite-accepted.patch
+```
+
+| Step | sha256 of `ztmetro/camera/ztcamera.c` |
+|---|---|
+| upstream `94b35c2a` | `e1dd0e7b528daf1cbc33c74a20d650e25ee60d9836298b5b0346f112177dd1b5` |
+| after the patch | `166d8d0490d328cf14ef7d173531eb9f24d94b7bb8450b64e2bb4ed566cacab0` ← **accepted source** |
+
+The accepted source built the installed `/usr/local/libexec/ztcamera-ugglite`
+(`94fd6c3aca38201f691ae4b2bdaba6dda33ac0c536651b18f2f204a160085578`,
+804 016 B); the build was repeated and came out byte-identical
+(`build/camera-inprocess-2026-11-09/RESULT.md`). The delta extends the
+application for multiplanar RAW10 (`SGRBG10P`) capture from the CSI RDI node,
+in-process front/rear switching and 180° rotation. It does **not** include the
+wrapper `/usr/local/bin/ztcamera`, the `ugglite-camera-paths` setup/release
+helper or the service that switch the media graph, so on a clean system this
+patch alone is not "a working camera in daily use".
 
 ## Kernel — `linux-postmarketos-qcom-msm89x7` 7.1.3-r1 (GPL-2.0-only)
 

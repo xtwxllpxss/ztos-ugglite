@@ -32,7 +32,10 @@ swclock_epoch=$(date -u +%s)
 hwclock_epoch=$(cat $rtc_sys_node)
 offset_epoch=$((swclock_epoch - hwclock_epoch))
 
-# write offset file
-echo $offset_epoch > $offset_directory/offset-storage
-# make sure offset gets written to disk
-sync
+# Publish a complete offset even if shutdown interrupts the write.
+temporary=$(mktemp "$offset_directory/.offset-storage.XXXXXX") || exit 1
+trap 'rm -f -- "$temporary"' EXIT
+printf '%s\n' "$offset_epoch" > "$temporary" || exit 1
+sync "$temporary" || exit 1
+mv -f -- "$temporary" "$offset_directory/offset-storage" || exit 1
+sync "$offset_directory"

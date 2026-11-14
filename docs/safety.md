@@ -1,16 +1,22 @@
 # Safety notes
 
-This device adaptation touches a phone whose only boot path is a host-assisted
-RAM boot. Read this before running anything from this repository.
+This device adaptation touches a phone that is installed persistently: the boot
+slot carries lk2nd followed by a ztOS payload, ztOS runs from an internal ext4
+root, and the stock boot image is backed up outside this repository for
+rollback. The path this repository documents for changes is a host-assisted RAM
+boot (`fastboot boot`). Read this before running anything from this repository.
 
 ## What NOT to do
 
-- **Do not flash partitions.** `fastboot boot` is the only boot method that was
-  used. Flashing boot/system/recovery/modem/persist or changing the partition
-  table is out of scope and can leave the phone unusable.
+- **Do not flash partitions.** This repository ships no flashing path. The
+  reference install wrote the boot slot exactly once, after backing up the stock
+  boot image; that write was a one-off owner decision, not a documented recipe.
+  `fastboot boot` is the only boot method this repository describes. Flashing
+  boot/system/recovery/modem/persist or changing the partition table is out of
+  scope and can leave the phone unusable.
 - **Do not expect an installer.** No installer, no flashing script and no
-  rollback image are published here. The installed root lives in `userdata`;
-  restoring Android is not covered.
+  rollback image are published here. The installed root lives on internal
+  storage (`/ztos-root` on `/dev/mmcblk0p48`); restoring Android is not covered.
 - **Do not write the RTC.** The write path crashed or dropped the session in
   every attempt, and the cause is unknown. Do not "test" it.
 - **Do not run unverified RAM probe images.** Some diagnostic images used during

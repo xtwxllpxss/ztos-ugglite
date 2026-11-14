@@ -7,9 +7,11 @@ public repository or why it does not go there at all.
 ## One authority
 
 `patches/userspace/ztmetro/` (0001–0006) and `patches/kernel/0001`–`0002` are the only
-series to apply. The device-layer copies named below stay published for the
-release that shipped them, but they are mirrors, not a second series: applying
-both double-applies 0001–0003 and the haptic hunk. `SERIES.md` states this first.
+series to apply. `patches/userspace/ztcamera/0001` is a single composed delta with
+its own section in `SERIES.md`, not part of that series. The device-layer copies
+named below stay published for the release that shipped them, but they are
+mirrors, not a second series: applying both double-applies 0001–0003 and the
+haptic hunk. `SERIES.md` states this first.
 
 ## Published (staged here, with provenance)
 
@@ -19,6 +21,7 @@ both double-applies 0001–0003 and the haptic hunk. `SERIES.md` states this fir
 | `build/touchkey-home-haptic/0002-…` / `devices/…/ztmetro-goodix-home-haptic.patch` | `…/patches/0004-ztmetro-goodix-home-haptic.patch` | **new**; series position, base and hash chain in `SERIES.md` |
 | `devices/…/ugglite-wifi-bars.patch` | `…/patches/0002-ztmetro-ugglite-wifi-bars.patch` | **new** (series copy; the device copy stays) — required to reproduce the accepted source |
 | `devices/…/ztmetro-brightness-no-frame-per-tick.patch` | `…/patches/0003-…` | **new series position**; required to reproduce the accepted source, explicitly *not* a brightness fix |
+| accepted camera application (`build/camera-inprocess-2026-11-09/ztcamera.c`) | `patches/userspace/ztcamera/0001-ztcamera-ugglite-accepted.patch` | **new**; composed delta, target and hash chain in `SERIES.md`; rebuild from it gives the installed ELF |
 | `devices/…/ztsettings-ugglite-identity.patch` | `…/patches/0005-…` | **new** |
 | `devices/…/wcn36xx-start-rate-0.patch` | `…/patches/kernel/0001-…` | **new**; measured bounds kept verbatim |
 | `build/display-minimal-lpm-fix/panel-lpm-errorpath.diff` | `…/patches/kernel/experimental/` | **new**, experimental, not in the default series |
@@ -57,7 +60,7 @@ both double-applies 0001–0003 and the haptic hunk. `SERIES.md` states this fir
 | `build/*/REPORT.md`, `DELIVERY.md`, `VALIDATOR.md`, `build.log`, `*.txt` hashes of local runs | session diary; the technical content is folded into `docs/hardware-status.md` and `SERIES.md` |
 | `evidence/`, `research/`, `START-HERE.md` | internal log with device identifiers, boot ids, SSIDs, MACs and personal paths |
 | `devices/…/overlay/etc/ssh/*`, `ztos-ssh-start`, `wpa_supplicant`/network profiles | credentials and transport configuration |
-| `devices/…/overlay/usr/local/sbin/ztos-update`, `zboot-usb-gadget` | already public at HEAD; unchanged here (no new audit was done) |
+| `devices/…/overlay/usr/local/sbin/zboot-usb-gadget` | already public at HEAD; unchanged here (no new audit was done). `ztos-update` is updated separately below |
 | firmware (`firmware-qcom-msm89x7` contents), `*.mbn`, `*.elf` | binary firmware, redistributed by pmaports under its own terms |
 
 ## Display, battery and camera build inputs
@@ -76,7 +79,9 @@ both double-applies 0001–0003 and the haptic hunk. `SERIES.md` states this fir
 | Component | Public path | Notes |
 |---|---|---|
 | Front-camera install kit | `devices/xiaomi-ugglite/front-camera/{install,rollback}-front-camera.sh`, `ugglite-front-preview`, `ugglite-front-camera.desktop` | **new**; installs the module with an sha256/vermagic gate, writes `modules-load.d`, helper resolves the video node from the media topology. The module binary is not shipped |
-| Audio UCM | `devices/xiaomi-ugglite/audio/HiFi.conf`, `xiaomi-ugg.conf` | **new**; the stock-path verb/devices, gain contract and mixer-vs-sink scale in `audio/README.md` |
+| Audio UCM | `devices/xiaomi-ugglite/audio/HiFi.conf`, `xiaomi-ugg.conf`, `VoiceCall.conf` | **new**; the stock-path verb/devices, the voice-call use case, gain contract and mixer-vs-sink scale in `audio/README.md`. `VoiceCall.conf` is the installed file (`df71fa27…`) |
+| Installed-proven updater and offline-time write | `devices/…/overlay/usr/local/sbin/ztos-update`, `…/swclock-offset-shutdown` | **updated**; both files are byte-identical to the installed ones (`771698dd…`, `1e23420a…`). The updater upgrades in one `pacman -Syu` transaction and classifies offline failures; the shutdown helper writes the offset atomically |
+| ModemManager enablement symlink | `devices/…/overlay/etc/systemd/system/multi-user.target.wants/ModemManager.service` | **fixed**; points at the absolute `/usr/lib/systemd/system/ModemManager.service`, matching the installed root. The previous `../ModemManager.service` resolved to a non-existent path |
 | Touch-key nav mapper | `devices/xiaomi-ugglite/units/ugglite-touchkey-navd.py`, `ugglite-touchkey-nav.service` | **new**; physical Goodix keys → nav codes, non-grabbing, short/long decided by ztmetro. Not the same layer as `patches/userspace/ztmetro/0001` |
 | Torch: DT fragment, helper, udev rule, install kit | `devices/xiaomi-ugglite/torch/` — `torch.dtsi`, `zt-flashlight`, `72-ugglite-torch.rules`, `install-torch.sh`, `rollback-torch.sh` | **new** in this pass; the rule and helper moved out of `units/` and now ship with the board DT fragment that creates `white:torch` on gpio34. The node was booted on the phone; the fragment restates that delta and is not a complete DTS |
 | Machine-readable pins | `upstream-lock.json` | **new**; the local lock without the host block and unpublished script references |
