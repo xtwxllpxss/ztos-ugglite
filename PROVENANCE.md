@@ -122,6 +122,20 @@ re-measured; here they are attributed, not asserted.
 * The rebuilt `rmtfs` hash quoted in `docs/modem.md` is copied from the delivery
   log of the accepted build, not recomputed for this repository.
 
+## Provenance of the camera/video and Venus documents
+
+* `docs/camera-video.md` — original English text written for this repository from
+  the 2026-11-15 camera and video measurements (sensor frame-rate cap, encoder
+  and application ceilings, pacer defect). No upstream text, no run-log excerpt
+  and no camera source is copied; the numbers are measurements made on this
+  device.
+* `docs/venus.md` — original English text written for this repository from the
+  Venus firmware discovery, the probe re-run and the synthetic encode session. It
+  describes file names, sizes and the stock-partition location of proprietary
+  Qualcomm firmware, but contains no firmware bytes, no firmware hash list, no
+  installer and no host path. The firmware remains Qualcomm's property and is
+  not redistributed here.
+
 ## Display, camera and battery milestone
 
 - Userspace 0006 copies the accepted battery discovery delta against the pinned

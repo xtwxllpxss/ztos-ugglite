@@ -27,11 +27,11 @@ are still unverified or broken.
 | Modem | LTE registration and the UI indicator work; **incoming calls and call audio are accepted**, SMS reception imports messages, data on/off and autoconnect are accepted; outgoing calls untested, SMS sending fails (RP cause 38), WWAN data unverified (tariff allow-list) — [docs/modem.md](docs/modem.md) |
 | GNSS | modem GPS engine verified (NMEA output, satellite received with SNR 31); no user-space client installed yet |
 | Offline time | system clock correct without NTP via `swclock-offset`; hardware RTC write still unsafe |
-| Rear camera | S5K3L8 identified and RAW10 1280×720 capture verified; owner reports the camera working. 720p30 recording, colour calibration, AE/ISO and AF feel are not accepted |
+| Rear camera | S5K3L8 identified and RAW10 1280×720 capture verified; owner reports the camera working. The sensor path measured 119.44 fps and a candidate build caps it to 29.84 fps with exposure up to 1/30 s, but that build is not installed. 720p30 recording, colour calibration, AE/ISO and AF feel are not accepted — measured video limits: [docs/camera-video.md](docs/camera-video.md) |
 | Front camera | S5K5E8 chip ID `0x5e80` and both CSI links verified, first frame captured; owner reports the camera working. Preview orientation/mirroring and higher modes not accepted |
 | Rear torch | works — DT-only `gpio-leds` node `white:torch` on gpio34, writable by the UI through a udev rule; `max_brightness=1`, on/off only. GPIO mapping is vendor-derived |
 | Updates | `ztos-update check` completes; `apply` upgrades in a single `pacman -Syu` transaction |
-| Venus hardware video encode | **broken** — the rootfs carries no Venus firmware and probe fails after `-ENOENT` |
+| Venus hardware video encode | probe passes in a running boot and a synthetic 720p H.264 encode works, but the firmware is device-local and not published, boot-time persistence is untested and the camera does not use it yet — [docs/venus.md](docs/venus.md) |
 | Suspend | `deep` unsupported by firmware; only `s2idle` available, screen-off power not measured |
 
 Details and the exact evidence boundary: [docs/hardware-status.md](docs/hardware-status.md).
@@ -57,7 +57,7 @@ build-environment/
   prepare-kernel.sh           kernel build in a separate container, pinned pmaports
   finalize-kernel.sh          in-container build/verify/export, refuses drift
   repack-boot-init.py         replace only init inside an existing boot image
-docs/                         hardware status, safety
+docs/                         hardware status, camera and video, Venus, safety
 SERIES.md                     patch order, base commits, hash chain, apply commands
 PROVENANCE.md                 per-file licence terms and derivation
 MAP.md                        every working component → path, or why excluded

@@ -40,6 +40,8 @@ haptic hunk. `SERIES.md` states this first.
 | `build-environment/build-ugglite-modem.sh` | `build-environment/build-ugglite-modem.sh` | **new**; fetches the pinned rmtfs/qrtr revisions, verifies the checkout, installs only the binary. No host path inside |
 | `research/ugglite-next-plan.md` | `docs/next-plan.md` | **new**; the prioritised work order, rewritten for publication. Not a verbatim copy: internal paths, candidate sha prefixes and the working-diary framing were dropped |
 | `research/ugglite-next-plan.md` (raw), `START-HERE.md`, `research/*` | — | still excluded: device identifiers, boot ids, SSIDs, MACs, host paths and session diary. Only the plan's technical content is published, in `docs/next-plan.md` |
+| `research/ugglite-camera-fps-budget.md`, `build/camera-live-test-2026-11-15/RESULT.md`, `build/dark-record-2026-11-15/RESULT.md`, `build/record-tuning-2026-11-15/RESULT.md` | `docs/camera-video.md` | **new**; measurements only, rewritten without run logs, boot ids, host paths, per-run hash tables or the recording control commands |
+| `research/ugglite-venus-firmware.md`, `build/venus-load-test-2026-11-15/`, `build/venus-encode-2026-11-15/` | `docs/venus.md` | **new**; firmware discovery, probe chain and the synthetic encode in prose. Firmware blobs, installer/runner scripts, host paths and raw dmesg dumps are excluded |
 
 ## Excluded, with the reason (not a judgement on the work)
 
@@ -62,6 +64,9 @@ haptic hunk. `SERIES.md` states this first.
 | `devices/…/overlay/etc/ssh/*`, `ztos-ssh-start`, `wpa_supplicant`/network profiles | credentials and transport configuration |
 | `devices/…/overlay/usr/local/sbin/zboot-usb-gadget` | already public at HEAD; unchanged here (no new audit was done). `ztos-update` is updated separately below |
 | firmware (`firmware-qcom-msm89x7` contents), `*.mbn`, `*.elf` | binary firmware, redistributed by pmaports under its own terms |
+| `build/venus-fw-hunt-2026-11-15/overlay/usr/lib/firmware/venus.{mdt,b00..b04}` | proprietary Qualcomm firmware; redistribution is not permitted. Only file names, sizes and the stock-partition location are described in `docs/venus.md`. No blob, hash list or copy recipe is published |
+| `build/venus-fw-hunt-2026-11-15/{install,rollback}-venus-fw.sh`, `build/venus-encode-2026-11-15/*.sh` | host/stand paths and phone-state automation (`modprobe`, `scp`, rollback, dmesg marks); not a publishable recipe, and it would ship paths to unpublished local payloads |
+| `build/venus-encode-2026-11-15/*.{h264,png,ko,zst}`, `build/dark-record-2026-11-15/*.{mkv,png,ppm}`, `build/record-tuning-2026-11-15/*.{mkv,log}`, `build/record-tuning-2026-11-15/ztcamera-*` | encoded clips, captures, modules and run logs; the stable technical content is in `docs/camera-video.md` and `docs/venus.md`, the artifacts are not publication material |
 
 ## Display, battery and camera build inputs
 

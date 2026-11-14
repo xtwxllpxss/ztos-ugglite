@@ -21,9 +21,13 @@ work.
   for multiplanar RAW10 and 180° rotation, and the installed binary
   (`94fd6c3a…`) is reproducible from the published
   [camera-application patch](../patches/userspace/ztcamera/); the device owner
-  reports the camera working. Colour calibration, AE/ISO, AF feel and 720p30
-  recording are **not** accepted, and night frames stay dark until vertical
-  blanking is raised (the 1280×720 mode clamps exposure to 1/120 s).
+  reports the camera working. The 1280×720 sensor path measured 119.44 fps, and
+  a userspace vertical-blanking cap in a candidate application build measured
+  29.84 fps with exposure up to 1/30 s; that build is not installed. Colour
+  calibration, AE/ISO, AF feel and 720p30 recording are **not** accepted, and
+  night frames stay dark on the installed build (the 1280×720 mode clamps
+  exposure to 1/120 s). Sensor modes, recording ceilings and the pacer defect:
+  [camera and video](camera-video.md).
 - **Front camera.** The out-of-tree S5K5E8 driver
   ([devices/…/front-camera/](../devices/xiaomi-ugglite/front-camera/)) loaded
   against the accepted kernel, read chip ID `0x5e80` over CCI1, and CAMSS bound
@@ -97,11 +101,21 @@ work.
   on hardware: the ACP static registry is not shared with the PCM in the
   PipeWire process, so required-open returns `-ENODEV`. It was rolled back and
   must not be reintroduced as a fix.
-- **Recording tempo.** Captured frames are fast enough (the sensor path was
-  measured at about 119 fps in 1280×720), but the userspace CPU demosaic plus a
-  15-fps pacer yields a 15-fps clip. A 720p30/24 build exists but is not accepted.
-- **Low-light exposure.** In the 1280×720 mode the driver clamps exposure to
-  1/120 s until vertical blanking is raised, so night frames are dark and noisy.
+- **Video recording tempo.** A 30 fps sensor rate is achievable from userspace
+  (measured 29.84 fps in a candidate build), but recording is still not 30
+  unique frames/s: the CPU x264 encoder accepts about 19 fps at 720p and 29 fps
+  at 540p, the single-threaded application already runs at 89–95 % of one core,
+  and the pacer fills late slots with duplicate frames. Measured recordings
+  carry 11–14 unique frames/s in a 30 fps container. None of the measurement
+  builds is installed. Numbers: [camera and video](camera-video.md).
+- **Recording pacer defect.** When it falls behind, the pacer writes duplicate
+  frames through the same pipe and does not write the skipped slots, so a clip
+  is 1.4–1.7× shorter than the recording and plays faster than real time. This
+  is independent of resolution.
+- **Low-light exposure, installed build.** In the 1280×720 mode the driver
+  clamps exposure to 1/120 s until vertical blanking is raised, so night frames
+  are dark and noisy. The candidate build raises vertical blanking and reaches
+  1/30 s; it is not installed.
 - **Camera quality.** Colour calibration, AE/ISO, AF feel and front-preview
   orientation/mirroring.
 - **Microphone.** The capture route is proven; gain candidates
@@ -111,9 +125,15 @@ work.
 - **WWAN data.** A bearer comes up and addresses/routes are handed out, but
   HTTPS probes time out. The tariff uses allow-lists, so this is not claimed
   either way.
-- **Venus hardware video encode.** Driver and DT node are enabled, but the root
-  filesystem carries no Venus firmware, so probe fails after `-ENOENT`. Software
-  encode only.
+- **Venus hardware video encode — not integrated.** Driver and DT node are
+  enabled. The stock `modem` partition carries the Venus firmware and
+  `firmware_class.path` points there, but the boot-time probe runs before that
+  partition is mounted and fails after `-ENOENT`. Reloading the core module in a
+  running boot makes the probe pass and registers the decoder/encoder nodes, and
+  a synthetic 1280×720 H.264 encode through the encoder node completes and
+  decodes back. The camera application does not use it, reboot-time persistence
+  was not tested, and the firmware is proprietary and not published:
+  [Venus](venus.md). Recording still uses the software encoder.
 - **Suspend and automatic brightness.** `deep` is not supported by the firmware
   (PSCI reports `NOT_SUPPORTED`); only `s2idle` is available and screen-off draw
   is not measured. An ambient-light channel does not exist, so automatic

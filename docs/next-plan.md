@@ -2,8 +2,9 @@
 
 > Historical plan from before the accepted DSI video-clock build and S5K3L8
 > RAW10 capture. For the current acceptance boundary, see
-> [hardware status](hardware-status.md). The next camera step is to establish
-> scene exposure and preview. End-to-end system build gaps are tracked in
+> [hardware status](hardware-status.md); measured video limits and the hardware
+> encoder are in [camera and video](camera-video.md) and [Venus](venus.md).
+> End-to-end system build gaps are tracked in
 > [Build and boot](BUILD-AND-BOOT.md).
 
 This is a work-ordering document, not a status claim. Nothing here is accepted
