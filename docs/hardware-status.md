@@ -34,9 +34,13 @@ work.
   both sensors (`s5k3l8 → csiphy0`, `s5k5e8 → csiphy1`, links enabled). A
   640×480 SGRBG10 capture produced exactly 384000 bytes and cleaned up. The
   owner reports the front camera working through the camera application's
-  in-process facing switch. Preview orientation/mirroring, the larger modes
-  (1296×972/2592×1944) and AE remain unaccepted, and a front node delays the
-  rear graph because CAMSS has a single async notifier.
+  in-process facing switch. The application's `Loading…` failure was diagnosed,
+  fixed and accepted: the installed preview delivers live `/dev/video1` frames
+  at 640×480 and about 62 fps (binary after the fix `c2a28339…`; the previous
+  `ea79a1c8…` is kept as a backup). Preview orientation/mirroring, the larger
+  modes (1296×972/2592×1944) and AE remain unaccepted, and a front node delays
+  the rear graph because CAMSS has a single async notifier. Details:
+  [front camera](front-camera.md).
 - **Rear torch.** A DT-only `gpio-leds` node `white:torch` on `gpio34`
   (`gpio33` held low, `max_brightness=1`) booted in the RAM candidate
   `6995175f…` — that payload is now the installed boot slot — and appeared as
@@ -225,3 +229,13 @@ which conditions) is in `SERIES.md` and `PROVENANCE.md`. Build-time `not_verifie
 lists live with each recipe in `build/`. This file deliberately does not carry
 session logs, boot identifiers or per-run sysfs values: the status is the stable
 part, the run detail is not.
+
+## Update 2026-11-15
+
+- **Front camera:** `Loading…` fixed and accepted; live `/dev/video1` preview at
+  640×480, about 62 fps — [front camera](front-camera.md).
+- **Store and OSIAL:** not broken. The Store renders package lists and the only
+  visible failure is DNS for `pkgstats.archlinux.org`; OSIAL dumps 13 interfaces
+  in 1.9 s — [Store and OSIAL](store-and-osial.md).
+- **Sensors:** the sensor data path is verified, but rotation in the compositor
+  is not implemented and the ROTATION LOCK tile is a stub — [sensors](sensors.md).
