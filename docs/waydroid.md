@@ -1,4 +1,9 @@
-# Waydroid freeze policy — installed and verified
+# Waydroid freeze policy — removed by owner decision (2026-11-15)
+
+> **Status change:** Waydroid was removed from the device by the owner's
+> decision on 2026-11-15. Its images, userdata and the freeze-policy helper are
+> gone, and about 2.3 GB were freed. Everything below documents what was
+> verified *before removal*; it does not describe the current system.
 
 Waydroid now runs on this device to a verified point: a session starts, Android
 13 boots, a manually launched application draws a real window, and ztmetro's
@@ -132,3 +137,25 @@ Android properties, journal lines, cgroup values, screenshot). No boot ids,
 host paths, session transcripts or screenshots are published. "Runs" here means
 a manually started session with a launched application on one boot; it does not
 mean a supported Android experience.
+
+## Removal and the ATL follow-up (2026-11-15)
+
+Waydroid was removed as part of the storage plan and by the owner's decision.
+Android compatibility is no longer part of the daily system; the evidence above
+is kept because the freeze/thaw findings still describe the mainline-binder
+behaviour of this kernel.
+
+The follow-up path is ATL (Android Translation Layer). Feasibility results:
+
+- **binder is not a blocker.** The pinned kernel has `CONFIG_ANDROID_BINDER_IPC=y`
+  and legacy `/dev/binder*` nodes; ATL does not run an Android `system_server`,
+  so no binderfs or extra kernel option is needed.
+- **Packaging is the blocker.** ATL ships for Alpine edge (musl) and ztOS is
+  Arch/glibc; there is no ready Arch aarch64 package. An Alpine aarch64 chroot
+  kit (prebuilt packages, no ART build) is prepared for the phone but **not
+  installed**; a native glibc build is a later step.
+- **Limits:** about 2 GB RAM, the `gtk4`/`webkitgtk-6.0` footprint, and lower
+  APK compatibility than a full Android container. Camera, sensors, telephony
+  and Play Services are not expected to work.
+- A demo APK was run on the host build machine only; the proprietary APK is not
+  published here.

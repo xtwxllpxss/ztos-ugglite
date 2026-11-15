@@ -71,24 +71,39 @@ separately in [performance.md](performance.md)).
   telemetry (`100 %`, `Charging (+30 mA)`, `4.38 V`, `31.4 °C`, `cycles n/a` —
   the gauge has no cycle counter) and the settings/devices windows render
   without a crash. Details: [upstream.md](upstream.md).
-- **Combined ztmetro build** — the app-bar and minimum-size changes are built,
-  not yet installed.
+- **Combined ztmetro and the app bar** — the combined build (`356ac939…`, top
+  bar for foreign applications only, minimum-size fit) was installed and
+  accepted on the device; a bottom-position A/B build (`6ad8529e…`, 65 pt,
+  chevron/title/ellipsis, clears the on-screen keyboard) was tested on the
+  phone. The owner then chose **`appbar=off`** and no bar is shown now.
+- **Calculator header** — the duplicate `CALCULATOR` + `calculator` header was
+  reduced to one title (`af5c345f…`, accepted by frame; the previous binary is
+  kept as a backup).
+- **Files open-with** — the Files logic (`ztfiles` + GIO) was working; the
+  missing part was MIME associations. `mimeapps.list` and `.desktop` entries now
+  route text to featherpad and images to swayimg, confirmed with `gio mime`;
+  owner acceptance of opening a file is not claimed.
+- **Gallery v2** — folders/albums, video playback with posters and durations and
+  day grouping are installed. Scroll (`379631fa…`) and gesture (`1940a499…`)
+  builds are candidates for direct-window testing.
 
 ## UI kits delivered
 
 - **`ztgallery`** — a native camera roll (one C file, three installed files:
   binary, desktop entry, icon), grouped by day with a full-screen viewer and a
   swipe between photos. Grid and viewer were checked against host renders and
-  on the phone by frame; the tile appears in the application list. A version 2
-with folders/albums, video playback and scrolling is in development, not
-installed.
-- **Theme (system half)** — 21 files installed with a 21/21 hash check: GTK3/
-  GTK4/libadwaita CSS, Qt/KDE settings, foot and vim palettes, Firefox chrome,
-  icon and a launcher wrapper. On the phone NetSurf renders a flat black chrome
-  through the wrapper, foot and vim follow the palette; btop is unaffected by
-  the theme (see above) and gnome-terminal does not inherit the wrapper's
-  environment. Rollback was checked as a dry run only. Both kits are host-side
-  artefacts, not part of this repository.
+  on the phone by frame; the tile appears in the application list. Version 2 is
+  installed: folders/albums, video playback with posters and durations. The
+  scroll (`379631fa…`) and gesture (`1940a499…`) builds are candidates, not
+  accepted.
+- **Theme delivery (`ztmetro-dark`)** — the full kit is installed and verified:
+  GTK3/GTK4 user `settings.ini`, `/etc/environment` (`GTK_THEME`,
+  `QT_QPA_PLATFORMTHEME=qt6ct`), `qt6ct.conf`, and Firefox `userChrome.css`,
+  `userContent.css`, `user.js` in the real profile. Before/after frames of
+  galculator and featherpad show the dark flat chrome; NetSurf, foot and vim
+  follow the palette, btop does not (separate geometry problem) and
+  gnome-terminal does not inherit the wrapper environment. The kits are
+  host-side artefacts, not part of this repository.
 
 ## Still broken, and not proven
 
@@ -103,8 +118,8 @@ only visible failure is that `pkgstats.archlinux.org` does not resolve (DNS);
 OSIAL dumps 13 interfaces in 1.9 s — [store-and-osial.md](store-and-osial.md).
 The front-camera `Loading…` was traced to a cause and fixed: live preview from
 `/dev/video1` at 640×480, about 62 fps — [front-camera.md](front-camera.md).
-`ztgallery` v2 (folders/albums, video, scrolling) is in development, not
-installed.
+`ztgallery` v2 (folders/albums, video with posters, day grouping) is
+installed; its scroll and gesture builds are candidates.
 
 Not proven (manual owner acceptance): interactive behaviour — placing and
 receiving a call and its audio, sending and receiving SMS, typing into the
@@ -123,3 +138,25 @@ the phone, not from the raw `PASS` flag of the automation. The frames were taken
 in one boot; a "blank screen" can also be a slow load, so Store/OSIAL/Angelfish
 deserve a second look after a longer wait. No screenshots, logs or device
 identifiers are published.
+
+## Windows Phone UI reference (facts only)
+
+The question "why did the calculator have two headers?" was answered from
+Microsoft's own Windows Phone documentation. No third-party screenshots are
+published here; the reference contact sheet used privately for the study is not
+part of this repository.
+
+- **The app bar is bottom-only** in WP7/8/8.1: a row of icon buttons plus an
+  ellipsis, fixed 72 px height, moving to the side edge in landscape. No top app
+  bar and no in-app back chevron existed; back is the hardware/on-screen system
+  button at the bottom:
+  <https://learn.microsoft.com/en-us/previous-versions/windows/apps/ff431813(v=vs.105)>,
+  <https://learn.microsoft.com/en-us/previous-versions/windows/apps/hh202911(v=vs.105)>.
+- **The two-line header is a page header**, not an app header: application title
+  in capitals (20 px) plus an optional page title in lowercase (72 px Segoe WP
+  Semilight). Single-screen applications such as Calculator had no header at
+  all:
+  <https://learn.microsoft.com/en-us/previous-versions/msp-n-p/gg680267(v=pandp.11)>,
+  <https://learn.microsoft.com/en-us/previous-versions/windows/apps/ff769552(v=vs.105)>.
+- The top-left back chevron is a Windows 10 UWP pattern for PC/tablet, not part
+  of the Windows Phone mobile UX.

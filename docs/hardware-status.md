@@ -218,8 +218,8 @@ accepted change.
 
 ## Unverified
 
-- Waydroid: not exercised end to end. Only the prepared freeze-policy helper
-  exists, and it is not installed ([Waydroid](waydroid.md)).
+- Waydroid: removed by the owner's decision on 2026-11-15; its freeze-policy
+  helper is no longer installed ([Waydroid](waydroid.md)).
 - Anything not listed above. No claims.
 
 ## Evidence
@@ -239,3 +239,41 @@ part, the run detail is not.
   in 1.9 s — [Store and OSIAL](store-and-osial.md).
 - **Sensors:** the sensor data path is verified, but rotation in the compositor
   is not implemented and the ROTATION LOCK tile is a stub — [sensors](sensors.md).
+
+## Update 2026-11-15 — second pass
+
+- **App bar:** the combined build (`356ac939…`, top bar for foreign applications
+  only) was installed and accepted; a bottom-position A/B build (`6ad8529e…`)
+  was tested on the phone, and the owner then chose **`appbar=off`** — no bar is
+  shown now. `ztcalculator` keeps a single header (`af5c345f…`, accepted by
+  frame). The Windows Phone study is published as facts with source links only —
+  [applications and UI](apps.md).
+- **Theme:** GTK3/GTK4, Qt and Firefox theme delivery is installed and verified;
+  before/after frames of galculator and featherpad confirm it — [applications and
+  UI](apps.md).
+- **Files:** open-with is fixed through `mimeapps.list` and `.desktop` entries;
+  text opens in featherpad, images in swayimg, `gio mime` confirms — [applications
+  and UI](apps.md).
+- **Gallery:** v2 installed (folders/albums, video with posters and durations,
+  day grouping); scroll and gesture builds are candidates — [applications and
+  UI](apps.md).
+- **Rear camera incident:** a stale `ztcamera` and a broken media graph
+  (`STREAMON` `EPIPE`) stopped the rear camera; restarting the camera path
+  restored a 1280×720 preview at about 21 fps. An automatic-reset resilience
+  launcher kit is built, not installed — [camera and video](camera-video.md).
+- **Colour:** AE/AWB v2 metrics pass on frames (rear R/G cast 1.138→1.011, front
+  1.152→1.050, meanY stable, sdY 12.4→3.9), but the live candidate `9344a13e…`
+  segfaulted in `color_auto_wb`; the camera was rolled back to the accepted
+  `94fd6c3a…` and this work is paused — [camera and video](camera-video.md).
+- **720p30:** hardware (Venus) encode was **not accepted** — the trial stalled
+  (107/300 frames, `-110`) and was rolled back. Software candidate `9f3491c4…`
+  (RAW→NV12, no BGRA) is built and not installed; a Venus ftrace plan exists —
+  [Venus](venus.md).
+- **Storage (Plan A):** Waydroid removed; former Android partitions reused for
+  `/var`, `/home` and a 256 MB swap; the 9.7 GB root partition now has **4.0 GB
+  free (58 %)** where it had 851 MB. `/var` has 2.4 GB free, `/home` is tight
+  (22 MB). The first reboot needed a power cycle — that risk is open. No
+  partition paths or identifiers are published.
+- **Android apps:** Waydroid removed by owner decision; ATL feasibility says
+  binder is not a blocker, packaging (Alpine/musl vs Arch/glibc) is. An Alpine
+  chroot kit is prepared, not installed — [Waydroid](waydroid.md).

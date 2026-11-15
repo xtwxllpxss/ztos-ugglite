@@ -169,3 +169,21 @@ candidate that has never been run on the phone. It is published as
 [`patches/userspace/ztcamera/0004-pacer-retime.patch`](../patches/userspace/ztcamera/),
 rebased onto the live line; [SERIES](../SERIES.md) carries the hash chain and the
 status of the whole candidate series.
+
+## 720p30 and colour — status 2026-11-15
+
+- **Hardware encode rejected.** A Venus hardware-encode trial for 720p30 stalled
+  (107 of 300 frames, `-110`) and was rolled back. It is not an accepted path.
+- **Software candidate `9f3491c4…`.** RAW10→NV12 without a BGRA intermediate,
+  writer thread, x264 ultrafast; built, not installed, frame rate not measured.
+- **Colour (AE/AWB v2).** The sensors expose only exposure/gain/vblank in V4L2
+  (no auto-AE/AWB in the driver), so colour correction is done in the
+  application. Frame metrics pass: rear R/G cast 1.138→1.011, front
+  1.152→1.050, meanY stabilised, sdY 12.4→3.9. The live candidate `9344a13e…`
+  segfaulted in `color_auto_wb`, so the camera was rolled back to the accepted
+  `94fd6c3a…`; the fix is paused and an ASan harness is in progress. No colour
+  calibration is accepted yet.
+- **Camera resilience.** A stale camera process plus a media graph in a failed
+  state (`STREAMON` `EPIPE`) stopped the rear camera; restarting the camera path
+  restored 1280×720 at about 21 fps. A launcher kit with an automatic reset is
+  built (candidate, not installed).

@@ -144,3 +144,28 @@ for them:
    without `patches/kernel/0001`–`0002`; applying them is a manual step today.
    `patches/kernel/0003` is a candidate on top of that and is not part of any
    kernel recipe.
+
+## Update 2026-11-15 (publication #8)
+
+Components delivered or re-scoped in this pass; no artifacts are added to this
+repository.
+
+- **ztmetro app bar** — no bar now (`appbar=off`, owner decision); builds
+  `356ac939…` (top bar for foreign apps) and `6ad8529e…` (bottom A/B) and the
+  calculator single header `af5c345f…` are described in [docs/apps.md](docs/apps.md).
+  Their source is upstream plus the published `ztmetro` patch series, not new
+  files here.
+- **Theme (`ztmetro-dark`)** — device-side config (GTK3/GTK4 `settings.ini`,
+  `/etc/environment`, `qt6ct.conf`, Firefox profile files); status in
+  [docs/apps.md](docs/apps.md). Not a repository artifact.
+- **Files open-with** — device-side `mimeapps.list` + `.desktop` entries; status
+  in [docs/apps.md](docs/apps.md).
+- **Gallery v2 / scroll / gestures** — out-of-tree source; only status published
+  in [docs/apps.md](docs/apps.md).
+- **Waydroid removal and ATL** — [docs/waydroid.md](docs/waydroid.md).
+- **720p30 / Venus** — [docs/venus.md](docs/venus.md),
+  [docs/camera-video.md](docs/camera-video.md).
+- **Storage Plan A** — [docs/hardware-status.md](docs/hardware-status.md); no
+  partition paths or identifiers are published.
+- **Windows Phone study** — facts and external source URLs only
+  ([docs/apps.md](docs/apps.md)); third-party screenshots stay excluded.

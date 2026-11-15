@@ -189,3 +189,21 @@ Next: integrate the encoder into the camera application, and keep the separate
 recording-thread and pacer fixes from [camera and video](camera-video.md) — a
 hardware encoder alone does not give 30 unique frames/s while the application
 still does demosaic, scaling and the encode feed on one thread.
+
+## 720p30 status — 2026-11-15
+
+The target is a real 720p recording at about 30 unique frames per second. Two
+paths were tried:
+
+- **Hardware (Venus) encode — rejected.** The encode trial through the Venus
+  path stalled (107 of 300 frames, `-110`) and was rolled back. This is not an
+  accepted feature and no fps claim is made for it. The next hardware attempt
+  is planned around ftrace on the Venus driver (symbol names, a corrected
+  diagnostics script and a trace plan are prepared); it has not been run.
+- **Software encode — candidate `9f3491c4…`.** The candidate converts RAW10
+  straight to NV12 (no BGRA intermediate, avoiding a 1.44 MB per frame
+  conversion), writes from its own writer thread and encodes with x264
+  ultrafast. It is built and not installed; its frame rate is not measured yet,
+  so nothing is claimed about 30 fps.
+
+Neither path changes the accepted camera application (`94fd6c3a…`).
