@@ -8,7 +8,9 @@ public repository or why it does not go there at all.
 
 `patches/userspace/ztmetro/` (0001–0006) and `patches/kernel/0001`–`0002` are the only
 series to apply. `patches/userspace/ztcamera/0001` is a single composed delta with
-its own section in `SERIES.md`, not part of that series. The device-layer copies
+its own section in `SERIES.md`, not part of that series. `patches/kernel/0003`
+is a candidate kernel delta: it is published for review, not part of the
+accepted kernel state. The device-layer copies
 named below stay published for the release that shipped them, but they are
 mirrors, not a second series: applying both double-applies 0001–0003 and the
 haptic hunk. `SERIES.md` states this first.
@@ -22,6 +24,9 @@ haptic hunk. `SERIES.md` states this first.
 | `devices/…/ugglite-wifi-bars.patch` | `…/patches/0002-ztmetro-ugglite-wifi-bars.patch` | **new** (series copy; the device copy stays) — required to reproduce the accepted source |
 | `devices/…/ztmetro-brightness-no-frame-per-tick.patch` | `…/patches/0003-…` | **new series position**; required to reproduce the accepted source, explicitly *not* a brightness fix |
 | accepted camera application (`build/camera-inprocess-2026-11-09/ztcamera.c`) | `patches/userspace/ztcamera/0001-ztcamera-ugglite-accepted.patch` | **new**; composed delta, target and hash chain in `SERIES.md`; rebuild from it gives the installed ELF |
+| `devices/…/patches/kernel/venus-hfi3xx-skip-h264-8x8-transform.patch` | `patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch` | **new candidate**; one-line upstream-proposed fix, applies/reverts and the Venus directory cross-builds, full kernel not built, never booted |
+| GNSS client kit (`devices/xiaomi-ugglite/gnss/`, the GeoClue overlay files it installs, and its host-side report) | `docs/gnss.md` | **new**; the design, install/verify/rollback shape and the prepared-not-installed boundary, in English. The scripts and overlay are not published — see the exclusion table |
+| Waydroid freeze-policy kit (`devices/xiaomi-ugglite/waydroid/` and its host-side report) | `docs/waydroid.md` | **new**; what the helper fixes and, explicitly, what it does not (no launch/recover/session units). Scripts and overlay not published |
 | `devices/…/ztsettings-ugglite-identity.patch` | `…/patches/0005-…` | **new** |
 | `devices/…/wcn36xx-start-rate-0.patch` | `…/patches/kernel/0001-…` | **new**; measured bounds kept verbatim |
 | `build/display-minimal-lpm-fix/panel-lpm-errorpath.diff` | `…/patches/kernel/experimental/` | **new**, experimental, not in the default series |
@@ -67,6 +72,12 @@ haptic hunk. `SERIES.md` states this first.
 | `build/venus-fw-hunt-2026-11-15/overlay/usr/lib/firmware/venus.{mdt,b00..b04}` | proprietary Qualcomm firmware; redistribution is not permitted. Only file names, sizes and the stock-partition location are described in `docs/venus.md`. No blob, hash list or copy recipe is published |
 | `build/venus-fw-hunt-2026-11-15/{install,rollback}-venus-fw.sh`, `build/venus-encode-2026-11-15/*.sh` | host/stand paths and phone-state automation (`modprobe`, `scp`, rollback, dmesg marks); not a publishable recipe, and it would ship paths to unpublished local payloads |
 | `build/venus-encode-2026-11-15/*.{h264,png,ko,zst}`, `build/dark-record-2026-11-15/*.{mkv,png,ppm}`, `build/record-tuning-2026-11-15/*.{mkv,log}`, `build/record-tuning-2026-11-15/ztcamera-*` | encoded clips, captures, modules and run logs; the stable technical content is in `docs/camera-video.md` and `docs/venus.md`, the artifacts are not publication material |
+| `build/venus-encode-2026-11-15/venus-enc-patched*`, `build/camera-venus-record-2026-11-15/venus-enc-patched-unsigned.ko` | the NOP-neutralised `venus_enc` module: a diagnostic binary that disables one error check, not a fix. The source fix is published as `patches/kernel/0003`; a pre-built module would be a "load this" invitation with no source relation |
+| `devices/xiaomi-ugglite/patches/camera/venus-m2m-record-candidate.patch`, `build/camera-venus-record-2026-11-15/src/camera/{venus_m2m.c,venus_m2m.h}`, its build/install/rollback/morning scripts and the `ztcamera-*venus` binary | camera→Venus recording backend. Unit-tested against a mock V4L2 loop but never run on the device; the app delta is against an unpublished 720p30 candidate source line and needs ~920 lines of new encoder-client code that exists only as a host-tested candidate. Publishing a patch that cannot apply to any published source, next to unreviewed 920 lines, would not be a reproducible delta. The status is recorded in `docs/venus.md` |
+| `build/camera-pacer-fix-2026-11-15/pacer-fix.patch`, `{ztcamera.c,ztcamera.c.orig,offline/,*.mkv,*.sh,ztcamera-720p30-pacerfix}` | recording-timeline retime candidate. It was built and offline-verified on the `camera-v3`/`0742a21d` source line, which is **not** the live application line (`166d8d04`); it needs a rebase and a rebuild on the live line before any install, and its duration numbers come from that other lineage. Publishing it as a ready candidate would invite installing it over the live app. Deferred; status in `docs/camera-video.md` |
+| `build/camera-exposure-controls-2026-11-15/0001-fixed-exposure.patch`, `src/`, `ztcamera-720x1280-30fps-fixed` | host-only calibration candidate against the same unpublished 720p30 source line; never built against the accepted source and never measured on the sensor. The candidate boundary is in the docs, the delta is not published |
+| `devices/xiaomi-ugglite/{gnss,waydroid}/**` (scripts, overlay, run logs) | prepared kit scripts. They carry device-transport specifics and unpublished local payload paths. The design and status are published as `docs/gnss.md` and `docs/waydroid.md` |
+| `build/auto-rotate-2026-11-15/**` (the patched ztmetro binary, its patch, install/rollback scripts and run logs) | opt-in 180° rotation kit. The binary's base is a locally built, fade-tuned ztmetro that is not reproducible from the published series, and the orientation polarity was never observed on the device; it is an installable-candidate kit with an unproven base, so it is deferred rather than published. The unrotated shell state stays as stated in `docs/hardware-status.md` |
 
 ## Display, battery and camera build inputs
 
@@ -107,3 +118,5 @@ for them:
    reproducible `pacman -Q` baseline.
 5. **kernel patch application** — `prepare-kernel.sh` builds the pmaports kernel
    without `patches/kernel/0001`–`0002`; applying them is a manual step today.
+   `patches/kernel/0003` is a candidate on top of that and is not part of any
+   kernel recipe.

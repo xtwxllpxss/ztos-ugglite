@@ -8,7 +8,9 @@ reconstruction, and nothing was dropped for "not applying to clean upstream".
 `patches/userspace/ztmetro/0001`–`0006` is the **only** ztmetro series to apply.
 `patches/userspace/ztcamera/0001` is a single composed camera-application delta
 with its own section below; it is not part of the ztmetro series and not applied
-by `build-environment/prepare-userspace.sh`. The copies under
+by `build-environment/prepare-userspace.sh`. The recording candidates in the
+same area run on a second camera source lineage; that is explained in
+[docs/camera-video.md](docs/camera-video.md) and none of them is published. The copies under
 `devices/xiaomi-ugglite/patches/` are historical mirrors kept for the
 device-layer release that already shipped them; do not apply both, or 0001,
 0002, 0003 and the haptic hunk land twice. For the Wi-Fi kernel delta,
@@ -112,6 +114,17 @@ wrapper `/usr/local/bin/ztcamera`, the `ugglite-camera-paths` setup/release
 helper or the service that switch the media graph, so on a clean system this
 patch alone is not "a working camera in daily use".
 
+### Camera source lineages
+
+The accepted application source `166d8d04` is the live line: it is what built the
+installed ELF `94fd6c3a…`. The 720p30 build `acddafc9…` and the
+recording-pacer candidate were built from a **different** camera line
+(`camera-v3` `3b3d1082…` + the 720p30 vblank cap → `0742a21d…`), which does not
+carry the in-process/debounce/AF-dark work of the live line. The two are not
+interchangeable and a candidate from one cannot be installed over the other.
+No candidate patch from that line is published; the lineage facts and the
+correct rebase target are in [docs/camera-video.md](docs/camera-video.md).
+
 ## Kernel — `linux-postmarketos-qcom-msm89x7` 7.1.3-r1 (GPL-2.0-only)
 
 Upstream pin: `https://github.com/msm89x7-mainline/linux`, tag `v7.1.3-r1`,
@@ -122,6 +135,18 @@ packaged from pmaports `39fe8995ea485a798ac8f1eff091b3962352e791`.
 | `0001-wcn36xx-dynamic-ra-start-rate.patch` | `drivers/net/wireless/ath/wcn36xx/smd.c` | measured on hardware, one line |
 | `0002-dsi-preserve-video-clocks.patch` | `drivers/gpu/drm/msm/dsi/dsi_host.c` | accepted on hardware with the matching display modules and camera boot composition |
 | `experimental/panel-otm1901a-lpm-errorpath.diff` | `drivers/gpu/drm/panel/msm89x7-generated/panel-xiaomi-ugglite-otm1901a-tm.c` | module loads; visible brightness NOT accepted |
+| `0003-venus-hfi3xx-skip-h264-8x8-transform.patch` | `drivers/media/platform/qcom/venus/hfi_cmds.c` | **candidate**: host-only, cross-built, not booted (details below) |
+
+`0003` is **not** part of the accepted kernel state. It carries the upstream
+one-line fix that the subsystem maintainer proposed in the 2023 thread (list
+`HFI_PROPERTY_PARAM_VENC_H264_TRANSFORM_8X8` as unsupported in the HFI 1xx
+packetizer, so `venus_session_set_property()` skips it instead of failing
+`VIDIOC_REQBUFS` on HFI 3xx). Host evidence: the patch applies and reverts
+against the pinned tree and the isolated `drivers/media/platform/qcom/venus/`
+directory cross-compiles for aarch64 (`LLVM=1`) with rc=0 and no warnings. It was
+never built into a full kernel, never booted, and is not in mainline. It changes
+nothing on a running device by itself. Background and the block it removes:
+[docs/venus.md](docs/venus.md).
 
 `0001` bounds, exactly as measured: WCN3620 on MSM8917/ugglite, one AP and one
 station, 690 frames — stock firmware start rate (`133`, MCS5) lost 67–80 %, value

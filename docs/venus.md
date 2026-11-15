@@ -68,8 +68,12 @@ mainline master, i.e. an upstream bug rather than a porting mistake). The
 measurement below was made with the error check neutralised by **one NOP
 instruction in `venus_enc.ko`** loaded from `/var/tmp` (the file in
 `/lib/modules` was not modified). That binary patch is a diagnostic, not a
-fix: the proper fix is a source change (skip the property on HFI 3xx) and a
-kernel rebuild, which has not been done, and no patched module is shipped here.
+fix. The proper fix is a source change (skip the property on HFI 3xx) plus a
+kernel rebuild; the source change is now published as the candidate kernel patch
+`patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch` (status in
+[SERIES](../SERIES.md)). It was never built into a full kernel and never booted,
+and no patched module is shipped here; the NOP-patched diagnostic module is not
+published.
 
 
 The encoder node is a V4L2 memory-to-memory device: NV12 frames in, H.264 out.
@@ -117,7 +121,10 @@ device tree node, the modem mount and the modem service were not modified.
 ## What is not claimed
 
 - Camera recording through Venus, or any recording improvement: not integrated,
-  not measured.
+  not measured. A camera-side recording backend that feeds the M2M encoder
+  exists as a host-only candidate: it was unit-tested against a mock V4L2 loop,
+  was never run on the device, and depends on an unpublished candidate
+  application source line, so it is not published ([MAP](../MAP.md)).
 - Boot-time persistence, or behaviour on any other unit.
 - Hardware decode.
 - Redistribution of the firmware.

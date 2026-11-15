@@ -53,6 +53,14 @@ Unknown or unclear licence → **excluded**, with the reason written down in
 * `docs-public/*` — proposed replacements for the public `README.md`,
   `README.ru.md` and `docs/hardware-status.md`; original work, no upstream text
   copied into them.
+* `patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch` — one-hunk
+  derivative of `drivers/media/platform/qcom/venus/hfi_cmds.c` at the pinned
+  kernel tree, written for this device after the same upstream fix was
+  reproduced on msm8917. Kernel-tree terms, `GPL-2.0-only`; upstream copyright
+  is retained and nothing further is granted. The header records the pinned
+  tree, the upstream thread and the exact candidate status (applies and reverts,
+  Venus directory cross-built, full kernel not built, never booted, not in
+  mainline).
 * `patches/kernel/experimental/panel-otm1901a-lpm-errorpath.diff` — copy of the
   one-hunk diff from `build/display-minimal-lpm-fix/`, with base and patched
   source hashes. The full patched `.c` is not shipped: it is a generated kernel
@@ -135,6 +143,12 @@ re-measured; here they are attributed, not asserted.
   Qualcomm firmware, but contains no firmware bytes, no firmware hash list, no
   installer and no host path. The firmware remains Qualcomm's property and is
   not redistributed here.
+* `docs/gnss.md`, `docs/waydroid.md` — original English text written for this
+  repository from the prepared host-only kits (GeoClue client, Waydroid freeze
+  policy). They describe the design, the verification boundary and the
+  install/rollback shape, but carry no device transport, host path, package
+  payload or per-device identifier. The kit scripts themselves are not
+  published; the reason is in `MAP.md`.
 
 ## Display, camera and battery milestone
 

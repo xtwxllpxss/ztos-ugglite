@@ -40,12 +40,15 @@ source root, so `ztmetro/ztmetro.c` means `<ztOS>/ztmetro/ztmetro.c`.
 | `ztsettings-config-dir-mkdir.patch` | `ztmetro/settings/ztsettings.c` | built and installed; visible effect not separately accepted |
 | `ugglite-wifi-bars.patch` | `ztmetro/ztmetro.c` | built and installed; Wi-Fi remains limited |
 
-Two kernel patches are included: `patches/kernel/0001-wcn36xx-dynamic-ra-start-rate.patch`
-(one line; measured bounds in `SERIES.md`) and
-`patches/kernel/0002-dsi-preserve-video-clocks.patch` (DSI video clocks, part
-of the accepted brightness behaviour). Both are GPL-2.0-only. The kernel tree
-itself, the panel experiment and the RTC patch are not published — `SERIES.md`
-and `MAP.md` state the reason for each.
+Three kernel patches are published: `patches/kernel/0001-wcn36xx-dynamic-ra-start-rate.patch`
+(one line; measured bounds in `SERIES.md`), `patches/kernel/0002-dsi-preserve-video-clocks.patch`
+(DSI video clocks, part of the accepted brightness behaviour), and
+`patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch`, a candidate
+for the upstream Venus HFI 1xx/3xx property bug. The first two are accepted
+hardware deltas; 0003 is host-only, cross-built but never booted, and is not
+part of any kernel recipe. All three are GPL-2.0-only. The kernel tree itself,
+the panel experiment and the RTC patch are not published — `SERIES.md` and
+`MAP.md` state the reason for each.
 
 ## Device facts
 

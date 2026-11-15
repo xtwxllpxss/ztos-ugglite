@@ -77,7 +77,8 @@ work.
   service split and scope limits: [modem.md](modem.md).
 - **GNSS engine.** Enabling `gps-raw`/`gps-nmea` produces NMEA; a satellite was
   received (SNR 31). No fix indoors is expected. No user-space client is
-  installed yet.
+  installed yet; a prepared GeoClue client kit is documented, not installed:
+  [GNSS client](gnss.md).
 - **Offline time.** `swclock-offset` keeps system time correct with NTP masked by
   storing `UTC − raw RTC` and only *reading* the RTC. Verified with
   `NTPSynchronized=no` and `swclock boot rc=0`; the system clock stayed within a
@@ -111,13 +112,18 @@ work.
 - **Recording pacer defect.** When it falls behind, the pacer writes duplicate
   frames through the same pipe and does not write the skipped slots, so a clip
   is 1.4–1.7× shorter than the recording and plays faster than real time. This
-  is independent of resolution.
+  is independent of resolution. A host-only retime candidate exists, but it was
+  built on the separate 720p30 source line and needs a rebase and a rebuild on
+  the live application line before it could be installed; it is not published
+  (see [two source lineages](camera-video.md#two-source-lineages)).
 - **Low-light exposure, installed build.** In the 1280×720 mode the driver
   clamps exposure to 1/120 s until vertical blanking is raised, so night frames
   are dark and noisy. The candidate build raises vertical blanking and reaches
   1/30 s; it is not installed.
 - **Camera quality.** Colour calibration, AE/ISO, AF feel and front-preview
-  orientation/mirroring.
+  orientation/mirroring. A host-only candidate adds fixed ISO/shutter environment
+  overrides for calibration; it is not installed and was not measured on the
+  sensor, so no manual-exposure claim is made.
 - **Microphone.** The capture route is proven; gain candidates
   (`ADC1 Volume` 6→8, `TX1 Digital Volume` 84→88) are not accepted.
 - **SMS sending.** Fails with RP cause 38. The SIM reports an FDN lock, which is
@@ -133,11 +139,18 @@ work.
   a synthetic 1280×720 H.264 encode through the encoder node completes and
   decodes back. The camera application does not use it, reboot-time persistence
   was not tested, and the firmware is proprietary and not published:
-  [Venus](venus.md). Recording still uses the software encoder.
+  [Venus](venus.md). The source fix for the HFI 1xx/3xx property bug that blocks
+  the stock encoder is published as a candidate kernel patch
+  (`patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch`): it applies
+  to the pinned tree and the Venus directory cross-builds, but it was never
+  built into a full kernel, booted or measured on the device. A camera-side
+  recording backend that feeds the encoder exists as a host-only candidate and
+  is not published (see [MAP](../MAP.md)). Recording still uses the software
+  encoder.
 - **Suspend and automatic brightness.** `deep` is not supported by the firmware
   (PSCI reports `NOT_SUPPORTED`); only `s2idle` is available and screen-off draw
   is not measured. An ambient-light channel does not exist, so automatic
-  brightness is not possible; auto-rotate is not wired into the shell.
+  brightness is not possible. Auto-rotate is not wired into the shell.
 
 ## Unsafe
 
@@ -146,9 +159,29 @@ work.
   reset, wrong offsets or driver behaviour is **not established**. Absence of a
   panic in the stream proves nothing. No RTC patch is published.
 
+## Prepared install kits — not installed
+
+Two kits are prepared and host-tested, and neither has been installed or run on
+the device. They are recorded as discrete status, not as features:
+
+- **GNSS client** (GeoClue + ModemManager): seven files, package prerequisite
+  `geoclue`, D-Bus-activated and off at rest. Not installed; first run and a
+  street fix are pending — [GNSS client](gnss.md).
+- **Waydroid freeze policy helper**: closes the screen-off freeze that never
+  thaws. It does not add the missing launch/recover/session units, so it is not
+  "Waydroid support" — [Waydroid](waydroid.md).
+
+The kit scripts are not part of this repository; [MAP](../MAP.md) states why. A
+separate opt-in 180° auto-rotate candidate exists on the host, but it is an
+installable binary whose base is not reproducible from the published series and
+its orientation polarity is unproven, so it is deferred rather than published;
+the shell does not rotate today.
+
 ## Unverified
 
-- Waydroid, and anything not listed above. No claims.
+- Waydroid: not exercised end to end. Only the prepared freeze-policy helper
+  exists, and it is not installed ([Waydroid](waydroid.md)).
+- Anything not listed above. No claims.
 
 ## Evidence
 

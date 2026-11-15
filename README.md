@@ -25,13 +25,14 @@ are still unverified or broken.
 | Audio | speaker playback and incoming-call audio accepted (RX1/RX2 at 104 in the accepted gain test; the installed verb writes 120, +36 dB, louder without distortion); idle hiss remains. Microphone is quiet, gain candidates not accepted |
 | RTC write | **unsafe — do not attempt**; root cause not established |
 | Modem | LTE registration and the UI indicator work; **incoming calls and call audio are accepted**, SMS reception imports messages, data on/off and autoconnect are accepted; outgoing calls untested, SMS sending fails (RP cause 38), WWAN data unverified (tariff allow-list) — [docs/modem.md](docs/modem.md) |
-| GNSS | modem GPS engine verified (NMEA output, satellite received with SNR 31); no user-space client installed yet |
+| GNSS | modem GPS engine verified (NMEA output, satellite received with SNR 31); no user-space client installed yet. A prepared GeoClue client kit is documented, not installed — [docs/gnss.md](docs/gnss.md) |
 | Offline time | system clock correct without NTP via `swclock-offset`; hardware RTC write still unsafe |
 | Rear camera | S5K3L8 identified and RAW10 1280×720 capture verified; owner reports the camera working. The sensor path measured 119.44 fps and a candidate build caps it to 29.84 fps with exposure up to 1/30 s, but that build is not installed. 720p30 recording, colour calibration, AE/ISO and AF feel are not accepted — measured video limits: [docs/camera-video.md](docs/camera-video.md) |
 | Front camera | S5K5E8 chip ID `0x5e80` and both CSI links verified, first frame captured; owner reports the camera working. Preview orientation/mirroring and higher modes not accepted |
 | Rear torch | works — DT-only `gpio-leds` node `white:torch` on gpio34, writable by the UI through a udev rule; `max_brightness=1`, on/off only. GPIO mapping is vendor-derived |
 | Updates | `ztos-update check` completes; `apply` upgrades in a single `pacman -Syu` transaction |
-| Venus hardware video encode | probe passes in a running boot and a synthetic 720p H.264 encode works, but the firmware is device-local and not published, boot-time persistence is untested and the camera does not use it yet — [docs/venus.md](docs/venus.md) |
+| Venus hardware video encode | probe passes in a running boot and a synthetic 720p H.264 encode works, but the firmware is device-local and not published, boot-time persistence is untested and the camera does not use it yet. The source fix for the stock-encoder HFI bug is a candidate kernel patch, cross-built but not booted — [docs/venus.md](docs/venus.md), [SERIES.md](SERIES.md) |
+| Waydroid | unverified; only a prepared freeze-policy helper exists and it is not installed — [docs/waydroid.md](docs/waydroid.md) |
 | Suspend | `deep` unsupported by firmware; only `s2idle` available, screen-off power not measured |
 
 Details and the exact evidence boundary: [docs/hardware-status.md](docs/hardware-status.md).
@@ -57,7 +58,7 @@ build-environment/
   prepare-kernel.sh           kernel build in a separate container, pinned pmaports
   finalize-kernel.sh          in-container build/verify/export, refuses drift
   repack-boot-init.py         replace only init inside an existing boot image
-docs/                         hardware status, camera and video, Venus, safety
+docs/                         hardware status, camera and video (two source lineages), Venus, GNSS client, Waydroid, safety
 SERIES.md                     patch order, base commits, hash chain, apply commands
 PROVENANCE.md                 per-file licence terms and derivation
 MAP.md                        every working component → path, or why excluded
@@ -65,7 +66,8 @@ LICENSES/, NOTICE.md          full licence texts and per-area scope
 ```
 
 Patch series: six `ztmetro` userspace deltas, one composed camera-application
-delta and two kernel source deltas, documented in `SERIES.md` order. `SERIES.md`
+delta and three kernel source deltas (0003 is a candidate, not accepted state),
+documented in `SERIES.md` order. `SERIES.md`
 "One authority" says which copies are the series and which are historical
 mirrors. `patches/**/experimental/` is not part of the default series and is not
 a feature claim.

@@ -1,0 +1,81 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-License-Identifier: GPL-2.0-only
+Upstream: linux v7.1.3-r1, drivers/media/platform/qcom/venus/hfi_cmds.c — original
+copyright retained; its holders are listed in that upstream file. No upstream
+authorship is claimed by this header.
+
+Kernel: linux-postmarketos-qcom-msm89x7 7.1.3-r1 (upstream
+https://github.com/msm89x7-mainline/linux tag v7.1.3-r1), file
+drivers/media/platform/qcom/venus/hfi_cmds.c. The kernel tree is
+GPL-2.0-only; this patch carries the same terms and grants nothing further.
+
+Series position: patches/kernel/0003, after 0001 and 0002. Not applied by
+build-environment/prepare-kernel.sh — applying kernel patches is a manual step.
+
+Status: candidate. Host-verified only: applies and reverts against the pinned
+tree, and the isolated drivers/media/platform/qcom/venus/ directory was
+cross-compiled for aarch64 (clang, LLVM=1) with rc=0 and no warnings. The full
+kernel was not built, the patch was never booted, and it is not submitted
+upstream. Applying it changes nothing on a running device by itself.
+
+Subject: [PATCH] media: venus: hfi_cmds: drop H264 8x8 transform property on HFI 1xx/3xx
+
+Bug
+---
+venc_set_properties() (venc.c) sends HFI_PROPERTY_PARAM_VENC_H264_TRANSFORM_8X8
+unconditionally when the capture format is V4L2_PIX_FMT_H264. Packetization for
+that property only exists in pkt_session_set_property_4xx(); the HFI 3xx
+packetizer falls through to pkt_session_set_property_1x(), which has no case
+for the property and hits "default: return -EINVAL". The error propagates out
+of venc_set_properties() -> venc_start_streaming(), so VIDIOC_REQBUFS fails
+with -EINVAL on every HFI 1xx/3xx Venus. Observed on msm8917/ugglite: kretprobe
+showed venc_set_properties+0x1a4 == -22 (-EINVAL).
+
+Upstream
+--------
+Known upstream bug, reported on APQ8016/msm8916 (HFI 1xx):
+  https://lore.kernel.org/linux-arm-msm/5D1EB136-0839-44BF-9F9B-A937237C9C96@noisolation.com/
+The subsystem maintainer (Stanimir Varbanov) rejected a venc.c version check and
+proposed exactly this one-line change in the packetization layer:
+  https://lore.kernel.org/linux-arm-msm/5a851116-561f-2d00-1310-2debc43ce249@gmail.com/
+and asked for a v2 with that change:
+  https://lore.kernel.org/linux-arm-msm/bd5a5b80-6849-bd98-0815-cc94badbec13@gmail.com/
+Qualcomm confirmed that on older HFI the video firmware applies 8x8 transform
+automatically for High/Constrained High profiles; the property exists only to
+let V4+ clients disable it, so dropping it on 1xx/3xx keeps firmware default
+behavior (8x8 enabled):
+  https://lore.kernel.org/linux-arm-msm/219b2cf5-4218-2e5c-2f12-718d5554b2b7@quicinc.com/
+Same class of fix as the merged commit "media: venus: hfi_cmds: List HDR10
+property as unsupported for v1 and v3": HFI_PROPERTY_PARAM_VENC_HDR10_PQ_SEI
+already sits one line above in the same switch. The v2 never landed; mainline
+v7.x still sends the property unconditionally (checked 2026-11-15: the tree's
+hfi_cmds.c is byte-identical to mainline), hence this local patch.
+
+Mechanism
+---------
+hfi_venus.c:venus_session_set_property() converts -ENOTSUPP into "return 0"
+without writing the HFI packet, so the property is silently skipped instead of
+failing the session. HFI 4xx/6xx keep their own case in
+pkt_session_set_property_4xx() and still send the property.
+
+Fixes: bfee75f73c37 ("media: venus: venc: add support for V4L2_CID_MPEG_VIDEO_H264_8X8_TRANSFORM control")
+
+Apply (from the top of the kernel tree):
+  patch -p1 --dry-run < patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch
+  patch -p1           < patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch
+  make ARCH=arm64 LLVM=1 drivers/media/platform/qcom/venus/
+Revert:
+  patch -p1 -R        < patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch
+
+Background: docs/venus.md.
+
+--- a/drivers/media/platform/qcom/venus/hfi_cmds.c
++++ b/drivers/media/platform/qcom/venus/hfi_cmds.c
+@@ -1065,6 +1065,7 @@
+ 		break;
+ 	}
+ 	case HFI_PROPERTY_PARAM_VENC_HDR10_PQ_SEI:
++	case HFI_PROPERTY_PARAM_VENC_H264_TRANSFORM_8X8:
+ 		return -ENOTSUPP;
+ 
+ 	/* FOLLOWING PROPERTIES ARE NOT IMPLEMENTED IN CORE YET */

@@ -7,6 +7,31 @@ behind "recording tempo is not accepted". Everything below was measured on the
 test unit (MSM8917, S5K3L8 rear sensor, kernel `7.1.3-msm89x7`, ztOS camera
 application). No number is copied from a datasheet.
 
+## Two source lineages
+
+Read this before installing anything.
+
+Two camera-application source lines exist and they are **not interchangeable**:
+
+| Line | Source | Built artifacts |
+|---|---|---|
+| live / in-process | accepted source `166d8d04…` = upstream pin + the published composed camera patch | installed application `94fd6c3a…` |
+| camera-v3 / 720p30 | `camera-v3` `3b3d1082…` + the 720p30 vertical-blanking cap → `0742a21d…` | 720p30 build `acddafc9…` (not installed); the pacer candidate was built from this line |
+
+The v3 line does not carry the live line's in-process front/rear switch, the
+facing debounce or the AF dark/scene work. A build from one line cannot be
+installed over the other: the vertical-blanking patch applies cleanly to the live
+source, while the AF-settle delta does not apply to `0742a21d`. The correct
+720p30 candidate is therefore `4c7c86df…` (804 496 B) = `166d8d04` + the
+vertical-blanking cap + AF-settle, built with the same flags as `acddafc9`
+(`REC_FPS=30`, 1:1, crf25/5000k), built twice byte-identically, `ARTIFACT PASS`
+host-side. It was not run on the phone and is not installed.
+
+The consequence for the pacer: the retime candidate was written and measured on
+the v3/`0742a21d` line. Before it could be delivered it has to be **rebased and
+rebuilt on the live line** (`166d8d04`, the source of the installed
+application); it is not a ready install, and it is not published here.
+
 ## The sensor is not the limit
 
 The 1280×720 mode in the S5K3L8 driver is a 2×2-binned 3840×2160 window plus a
@@ -109,8 +134,18 @@ candidate is not installed.
 - Any colour, AE/ISO or AF acceptance. Scene exposure improves only in the
   candidate build above.
 - The 2×2 demosaic timing on the phone; only the host measurement exists.
+- Any fixed ISO/shutter build: a host-only calibration candidate with manual
+  exposure/gain environment overrides exists, but it was built on the same
+  camera-v3/720p30 line, is not installed and was not measured on the sensor.
 
 The next levers, in the order the measurements support: a hardware encoder
 ([Venus](venus.md) works on this unit but is not integrated), a separate
 recording thread so the application does not serialise demosaic and encode, and
 fixing the pacer so a clip's duration matches the recording.
+
+The pacer candidate described in "two source lineages" removes the 1.4–1.7×
+speed-up by retiming the finished file to the wall clock with an `-itsscale`
+stream copy (no frame added, dropped or re-encoded; offline check on the clips
+above: 6.53 s of file → 10.63 s against 10.63 s of wall clock, all frames
+decode). It does not raise the unique-frame ceiling, and it is a candidate that
+first needs the rebase described above.
