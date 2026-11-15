@@ -68,12 +68,13 @@ mainline master, i.e. an upstream bug rather than a porting mistake). The
 measurement below was made with the error check neutralised by **one NOP
 instruction in `venus_enc.ko`** loaded from `/var/tmp` (the file in
 `/lib/modules` was not modified). That binary patch is a diagnostic, not a
-fix. The proper fix is a source change (skip the property on HFI 3xx) plus a
-kernel rebuild; the source change is now published as the candidate kernel patch
+fix. The proper fix is a source change (skip the property on HFI 3xx); it is now
+published as the candidate kernel patch
 `patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch` (status in
-[SERIES](../SERIES.md)). It was never built into a full kernel and never booted,
-and no patched module is shipped here; the NOP-patched diagnostic module is not
-published.
+[SERIES](../SERIES.md)). A full kernel was never built from it and it was never
+booted, and no patched module is shipped here; the NOP-patched diagnostic module
+is not published. The 2026-11-15 module build below shows that the fix does not
+need a rebuilt kernel at all.
 
 
 The encoder node is a V4L2 memory-to-memory device: NV12 frames in, H.264 out.
@@ -96,6 +97,58 @@ This proves the encoder, not the feature. What it does not prove:
   "event not sufficient resources" and a frame-number gap, and decoded only 17
   of 30 frames of a software-encoded reference. The encode direction is the
   useful one; the decode direction stays unproven.
+
+## The fix is one module replacement — no Image rebuild
+
+`venus` is built as a module (`CONFIG_VIDEO_QCOM_VENUS=m`), and the file the
+one-line fix changes, `hfi_cmds.o`, is linked into `venus-core.ko` — not into the
+kernel image. Delivering the fix therefore does **not** require rebuilding the
+kernel `Image`, the ramdisk or the DT: one module in the root filesystem is
+replaced, and the accepted boot baseline stays exactly as it is. That is a
+different scope from the kernel candidate in [SERIES](../SERIES.md), which exists
+for anyone who wants the change in the image instead.
+
+Built host-side from the pinned tree plus the published candidate patch, in the
+project's aarch64 container with clang/LLD:
+
+- `venus-core.ko`, `venus-dec.ko` and `venus-enc.ko` were produced from the
+  patched tree; the core module's `srcversion` is `8A3493636BC04E7B32F5841`
+  against the baseline module's `A89A6883…21D6`, and its `vermagic` is
+  `7.1.3-msm89x7 SMP preempt mod_unload aarch64`, byte-for-byte the running
+  kernel's value;
+- the undefined-symbol sets of the rebuilt and the baseline core module are
+  identical (139 = 139, empty diff), and `CONFIG_MODVERSIONS` is off, so there is
+  no symbol-CRC gate beyond the vermagic;
+- the patch is proven at object level: patched and unpatched `hfi_cmds.o` differ,
+  and the disassembly of `pkt_session_set_property_1x` changes (452 → 440
+  instructions);
+- the modules are unsigned because module signing was disabled in the build copy
+  only (`MODULE_SIG_FORCE` is not set on the device), so loading one taints the
+  kernel with `E`.
+
+Status: **modules built, not delivered.** They were built host-side (the phone
+was left alone), and nothing was installed, loaded or booted: the unit still
+needed its planned restart after the earlier Venus oops, so device acceptance is
+open. No module binary is published here — it is a binary and it is only valid
+for this exact kernel build. Loading it is kernel code, so it needs the owner's
+explicit agreement, even though no partition is involved.
+
+The reversible shape, if someone repeats it with their own build:
+
+1. back up the stock `venus-core.ko.zst` inside the module tree in the root
+   filesystem (never in the boot image), with its hash;
+2. put the rebuilt module at the same path and run `depmod`;
+3. take effect with a single module reload or a restart (one re-probe per boot —
+   see the warning above);
+4. verify: the module reports the expected `srcversion` and `vermagic`, the
+   encoder node appears, a 720p H.264 memory-to-memory encode succeeds without
+   the NOP module and without an unsigned diagnostic module, and the kernel log
+   is clean apart from the expected unsigned-module taint;
+5. roll back by restoring the backup, then one reload or restart.
+
+Risk: if the vermagic or the symbol set does not match, the module refuses to
+load — the failure is loud and safe. The same firmware, the same HFI version and
+the same one-re-probe-per-boot rule from the section above apply.
 
 ## Persistence, licensing and risk
 
@@ -123,8 +176,11 @@ device tree node, the modem mount and the modem service were not modified.
 - Camera recording through Venus, or any recording improvement: not integrated,
   not measured. A camera-side recording backend that feeds the M2M encoder
   exists as a host-only candidate: it was unit-tested against a mock V4L2 loop,
-  was never run on the device, and depends on an unpublished candidate
-  application source line, so it is not published ([MAP](../MAP.md)).
+  was never run on the device, and depends on the camera-v3 application source
+  line, which is not part of this repository, so its delta is not published
+  ([MAP](../MAP.md), [camera and video](camera-video.md)).
+- Loading the rebuilt module on the phone: the modules were built host-side and
+  never installed, loaded or booted here; device acceptance is open.
 - Boot-time persistence, or behaviour on any other unit.
 - Hardware decode.
 - Redistribution of the firmware.

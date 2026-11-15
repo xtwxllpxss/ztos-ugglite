@@ -27,10 +27,23 @@ vertical-blanking cap + AF-settle, built with the same flags as `acddafc9`
 (`REC_FPS=30`, 1:1, crf25/5000k), built twice byte-identically, `ARTIFACT PASS`
 host-side. It was not run on the phone and is not installed.
 
+The v3 source itself is a local development line and is **not reproducible from
+this repository**: the published camera patch series starts from the accepted
+source and carries candidates on top of it. Patches `0002`–`0004` under
+[`patches/userspace/ztcamera/`](../patches/userspace/ztcamera/) are that
+candidate chain — the vertical-blanking cap, the AF settle/boost change and the
+pacer retime — each with its base and result source hash; the chain and its
+status are in [SERIES](../SERIES.md). They are host-verified candidates: all three candidate builds
+are byte-reproducible and pass the artifact check, and none of them has been run
+on the phone.
+
 The consequence for the pacer: the retime candidate was written and measured on
-the v3/`0742a21d` line. Before it could be delivered it has to be **rebased and
-rebuilt on the live line** (`166d8d04`, the source of the installed
-application); it is not a ready install, and it is not published here.
+the v3/`0742a21d` line. It was later **rebased onto the live line**
+(`166d8d04`, the source of the installed application), rebuilt and checked
+offline on the same clips; that rebased delta is published as
+[`patches/userspace/ztcamera/0004-pacer-retime.patch`](../patches/userspace/ztcamera/)
+with its base and result hashes. It is a host-verified candidate, not a ready
+install: it has not been run on the phone.
 
 ## The sensor is not the limit
 
@@ -62,8 +75,10 @@ from userspace. After `VIDIOC_STREAMON`, the candidate application build sets:
 
 The cap was measured mid-stream: 119.44 fps before, 29.84 fps after, with
 `vertical_blanking=2530` read back. In the candidate application the same cap is
-applied automatically at stream start when the bound sensor is `s5k3l8`. DMA
-pressure falls from about 138 MB/s to 34.6 MB/s.
+applied automatically at stream start when the bound sensor is `s5k3l8` (the
+delta is published as
+[`patches/userspace/ztcamera/0002-sensor-720p30-cap.patch`](../patches/userspace/ztcamera/)).
+DMA pressure falls from about 138 MB/s to 34.6 MB/s.
 
 **This build is not installed.** The installed application remains the accepted
 `94fd6c3a…`, which has neither the vertical-blanking cap nor the recording
@@ -137,6 +152,8 @@ candidate is not installed.
 - Any fixed ISO/shutter build: a host-only calibration candidate with manual
   exposure/gain environment overrides exists, but it was built on the same
   camera-v3/720p30 line, is not installed and was not measured on the sensor.
+  Its base line is not part of this repository, so the delta is not published
+  ([MAP](../MAP.md)).
 
 The next levers, in the order the measurements support: a hardware encoder
 ([Venus](venus.md) works on this unit but is not integrated), a separate
@@ -147,5 +164,8 @@ The pacer candidate described in "two source lineages" removes the 1.4–1.7×
 speed-up by retiming the finished file to the wall clock with an `-itsscale`
 stream copy (no frame added, dropped or re-encoded; offline check on the clips
 above: 6.53 s of file → 10.63 s against 10.63 s of wall clock, all frames
-decode). It does not raise the unique-frame ceiling, and it is a candidate that
-first needs the rebase described above.
+decode). It does not raise the unique-frame ceiling, and it is a host-verified
+candidate that has never been run on the phone. It is published as
+[`patches/userspace/ztcamera/0004-pacer-retime.patch`](../patches/userspace/ztcamera/),
+rebased onto the live line; [SERIES](../SERIES.md) carries the hash chain and the
+status of the whole candidate series.

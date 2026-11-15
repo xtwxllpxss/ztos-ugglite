@@ -40,6 +40,18 @@ source root, so `ztmetro/ztmetro.c` means `<ztOS>/ztmetro/ztmetro.c`.
 | `ztsettings-config-dir-mkdir.patch` | `ztmetro/settings/ztsettings.c` | built and installed; visible effect not separately accepted |
 | `ugglite-wifi-bars.patch` | `ztmetro/ztmetro.c` | built and installed; Wi-Fi remains limited |
 
+Three camera-application candidate patches are published under
+`patches/userspace/ztcamera/0002`–`0004`: the 720p30 vertical-blanking cap, the
+AF settle/boost change and the pacer retime. They are derivatives of the same
+`ztmetro/camera/ztcamera.c` and carry the same terms as the accepted composed
+delta (GPL-3.0-or-later by the "or later" option); their diff bodies are
+byte-identical to the local camera kit files, and each header states its base,
+result and host-only candidate status. They apply on top of the accepted source
+and are not accepted state. The SMS receive daemon
+`devices/xiaomi-ugglite/phone-ui/ztsmsd` is original work for this device
+(GPL-3.0-or-later) published verbatim from the installed system, and its dedupe
+candidate patch is published next to it.
+
 Three kernel patches are published: `patches/kernel/0001-wcn36xx-dynamic-ra-start-rate.patch`
 (one line; measured bounds in `SERIES.md`), `patches/kernel/0002-dsi-preserve-video-clocks.patch`
 (DSI video clocks, part of the accepted brightness behaviour), and

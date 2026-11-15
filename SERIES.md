@@ -6,11 +6,14 @@ reconstruction, and nothing was dropped for "not applying to clean upstream".
 ## One authority
 
 `patches/userspace/ztmetro/0001`–`0006` is the **only** ztmetro series to apply.
-`patches/userspace/ztcamera/0001` is a single composed camera-application delta
-with its own section below; it is not part of the ztmetro series and not applied
-by `build-environment/prepare-userspace.sh`. The recording candidates in the
-same area run on a second camera source lineage; that is explained in
-[docs/camera-video.md](docs/camera-video.md) and none of them is published. The copies under
+`patches/userspace/ztcamera/0001` is the single composed camera-application delta
+that reconstructs the accepted source; `0002`–`0004` are **candidates** that apply
+on top of its result and are published for review, not as accepted state. None of
+the camera patches is part of the ztmetro series or applied by
+`build-environment/prepare-userspace.sh`. The camera candidates on the separate
+`camera-v3` source line (fixed exposure, Venus M2M recording backend) are not
+published: that source line is not reproducible from this repository — see
+[docs/camera-video.md](docs/camera-video.md) and [MAP.md](MAP.md). The copies under
 `devices/xiaomi-ugglite/patches/` are historical mirrors kept for the
 device-layer release that already shipped them; do not apply both, or 0001,
 0002, 0003 and the haptic hunk land twice. For the Wi-Fi kernel delta,
@@ -117,13 +120,100 @@ patch alone is not "a working camera in daily use".
 ### Camera source lineages
 
 The accepted application source `166d8d04` is the live line: it is what built the
-installed ELF `94fd6c3a…`. The 720p30 build `acddafc9…` and the
+installed ELF `94fd6c3a…`. The 720p30 build `acddafc9…` and the first
 recording-pacer candidate were built from a **different** camera line
 (`camera-v3` `3b3d1082…` + the 720p30 vblank cap → `0742a21d…`), which does not
 carry the in-process/debounce/AF-dark work of the live line. The two are not
 interchangeable and a candidate from one cannot be installed over the other.
-No candidate patch from that line is published; the lineage facts and the
-correct rebase target are in [docs/camera-video.md](docs/camera-video.md).
+`camera-v3` is a local development line and is not reproducible from this
+repository, so the candidates that need it (fixed exposure, Venus M2M recording
+backend) are not published; the lineage facts are in
+[docs/camera-video.md](docs/camera-video.md). The candidates that *are* published
+(`0002`–`0004`) run on the live line and apply on top of the accepted source —
+see the next section.
+
+## Userspace — camera application candidates (0002–0004, not accepted state)
+
+These three patches are candidates. They apply in order on top of the accepted
+composed delta `0001` and are **not** part of the accepted state: no candidate
+build was ever installed or run on the phone. They are published because the
+delta is real, the base is reproducible from this repository, and each one fixes
+a measured defect.
+
+Target: `ztmetro/camera/ztcamera.c` at the same upstream pin (`94b35c2a`).
+`0001` is applied from the checkout root with `git apply`; `0002`–`0004` use
+the camera kit's relative paths and are applied from the `ztmetro/` directory
+with GNU `patch` (each file's header carries its own base, result and status):
+
+```sh
+git apply patches/userspace/ztcamera/0001-ztcamera-ugglite-accepted.patch
+cd ztmetro
+patch -p1 -F0 < ../patches/userspace/ztcamera/0002-sensor-720p30-cap.patch
+patch -p1 -F0 < ../patches/userspace/ztcamera/0003-af-settle-boost.patch
+patch -p1 -F0 < ../patches/userspace/ztcamera/0004-pacer-retime.patch
+```
+
+### The hash chain is the point
+
+`ztmetro/camera/ztcamera.c` through the chain, measured by applying the
+published files in order to the pinned upstream file:
+
+| Step | sha256 of `ztmetro/camera/ztcamera.c` |
+|---|---|
+| upstream `94b35c2a` | `e1dd0e7b528daf1cbc33c74a20d650e25ee60d9836298b5b0346f112177dd1b5` |
+| + `0001` (accepted) | `166d8d0490d328cf14ef7d173531eb9f24d94b7bb8450b64e2bb4ed566cacab0` ← **installed source** |
+| + `0002` vblank cap | `5647a698e1db38b0af0c911a3ad2a0df1576c69bd9dbab3a6d7645dbcb17ebee` |
+| + `0003` AF settle/boost | `4636d552fcd90000602513b8a520c9f746226f82e84635a4c94fd0ef269ed71d` |
+| + `0004` pacer retime | `5846f8d64d3c5d44df09051df510162c5ed1fe439746ee2b41e533f28f35d1e7` ← **candidate source** |
+
+Each patch applies with `-F0` (no fuzz, no offset) and its diff body is
+byte-identical to the local camera kit copy it comes from.
+
+### Candidate builds, and what is not published
+
+Three candidate builds were made from this chain with the camera recipe; each
+was built twice byte-identically and passed the host artifact check. The
+binaries are not published ([MAP.md](MAP.md)):
+
+| Candidate | Composition | Source sha256 | ELF sha256 | Size | On device |
+|---|---|---|---|---|---|
+| AF only | `0001` + `0003` | `c89b4c4873c6f0c0bf419fb2a9016cc4753bcc8a08e56dfb89e2a8d9d401e928` | `6cab0db057f8aa73eb56adabe16f7777bba0e1964760696b20cad6d909da5cca` | 803 224 B | never run |
+| vblank + AF | `0001` + `0002` + `0003` | `4636d552fcd90000602513b8a520c9f746226f82e84635a4c94fd0ef269ed71d` | `4c7c86dfbd1b6ebf80b5d74dda15a36664f0584f8498b3401a1fc1972723af70` | 804 496 B | never run |
+| vblank + AF + pacer | `0001` + `0002` + `0003` + `0004` | `5846f8d64d3c5d44df09051df510162c5ed1fe439746ee2b41e533f28f35d1e7` | `4011bccb870705f494a9d35738820df77cc6fc2e722d77010856fea9b14726cb` | 807 560 B | never run |
+
+Evidence per patch, and its limit:
+
+* `0002` — the cap was measured on the phone on the camera-v3 line: 119.44 fps
+  before, 29.84 fps after, exposure maximum 804 → 3242 lines (1/30 s). On the
+  live line the delta is host-verified only; the measurement is not repeated
+  from this source line.
+* `0003` — logic and disassembly reviewed host-side; the optical criteria
+  (settle 170/280 ms, best-value spread, sweep duration) are a calculation and
+  have never been observed on the sensor. AF feel is not accepted.
+* `0004` — rebased onto the live line and checked offline on real clips:
+  6.533 s of file retimed to 10.632 s against 10.633 s of wall clock, 196/196
+  frames, decode rc=0. The live recording has not been made.
+
+None of the three fixes the recording ceiling: unique frames per second stays
+limited by the single-threaded application and the software encoder
+([docs/camera-video.md](docs/camera-video.md)).
+
+## Device layer — `ztsmsd` receive-dedupe candidate (not accepted state)
+
+`devices/xiaomi-ugglite/phone-ui/ztsmsd` is the installed SMS receive daemon,
+published verbatim (sha256
+`b2786ed651973542c51f4cb7d828d6647d5e10ee060a2a26e047ffc550d46da8`, the
+installed file). `devices/xiaomi-ugglite/phone-ui/ztsmsd-dedupe-v2.patch`
+applies from the repository root with `patch -p1` and produces source sha256
+`c8a704b45afcfeaa8a0eaea86ea6ac0e6222f17fb50091bbfaf2d5314db3caea`.
+
+Status of that delta: **candidate**, host-verified against a fake ModemManager
+(28 of 28 behavioural scenarios, including the two-different-messages-in-one-
+second case and a poisoned empty-text dedupe key from the live state), never
+installed on the phone. An earlier draft that dropped the message text from the
+dedupe key could silently lose a message; it is not published, and this patch
+replaces it. Why the receive path is QMI WMS rather than AT, and what a stuck
+`(receiving)` object means: [docs/sms.md](docs/sms.md).
 
 ## Kernel — `linux-postmarketos-qcom-msm89x7` 7.1.3-r1 (GPL-2.0-only)
 
@@ -145,8 +235,13 @@ packetizer, so `venus_session_set_property()` skips it instead of failing
 against the pinned tree and the isolated `drivers/media/platform/qcom/venus/`
 directory cross-compiles for aarch64 (`LLVM=1`) with rc=0 and no warnings. It was
 never built into a full kernel, never booted, and is not in mainline. It changes
-nothing on a running device by itself. Background and the block it removes:
-[docs/venus.md](docs/venus.md).
+nothing on a running device by itself. A full `Image` rebuild is also not the
+only route: `venus` is built as a module, `hfi_cmds.o` is linked into
+`venus-core.ko`, and a host-side module build produced a core module with the
+running kernel's `vermagic` and an identical symbol set — see
+[docs/venus.md](docs/venus.md#the-fix-is-one-module-replacement--no-image-rebuild).
+Those modules are not published and were never installed or loaded. Background
+and the block it removes: [docs/venus.md](docs/venus.md).
 
 `0001` bounds, exactly as measured: WCN3620 on MSM8917/ugglite, one AP and one
 station, 690 frames — stock firmware start rate (`133`, MCS5) lost 67–80 %, value

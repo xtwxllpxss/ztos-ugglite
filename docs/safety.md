@@ -38,6 +38,14 @@ boot (`fastboot boot`). Read this before running anything from this repository.
 - Keep USB as the only console during a RAM boot; there is no display fallback
   when the session dies.
 
+## If the phone stops answering
+
+[Recovery](recovery.md) is a decision tree that starts from the phone's live
+state: a normal restart when SSH answers, the host-assisted RAM boot (which
+writes nothing) when it does not, and a hard stop when neither works. It
+contains no flashing step, no image and no installer, and it repeats the
+prohibitions above rather than relaxing them.
+
 ## Reporting
 
 Security-sensitive findings about *this* repository (for example a script that

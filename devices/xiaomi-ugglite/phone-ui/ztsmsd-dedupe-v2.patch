@@ -1,0 +1,225 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch: ugglite ztsmsd — safe SMS dedupe, stuck-receiving report, log before
+dedupe key, single-instance lock. Target: devices/xiaomi-ugglite/phone-ui/ztsmsd
+in this repository, which is byte-identical to the installed daemon.
+
+Base: sha256 b2786ed651973542c51f4cb7d828d6647d5e10ee060a2a26e047ffc550d46da8
+(the installed script, copied verbatim above).
+Result: sha256 c8a704b45afcfeaa8a0eaea86ea6ac0e6222f17fb50091bbfaf2d5314db3caea.
+
+Apply from the repository root with GNU patch (the header above is skipped):
+
+    patch -p1 < devices/xiaomi-ugglite/phone-ui/ztsmsd-dedupe-v2.patch
+
+Effect, all additive: the dedupe key keeps the message text (dropping it loses
+the second of two different messages delivered in the same second, because the
+ModemManager timestamp has one-second resolution), and the legacy empty-text key
+is matched and upgraded instead; the log line is written before the dedupe key;
+a stuck `(receiving)` multipart object is reported once to the journal and to a
+state file and is never deleted; the single-instance lock no longer kills the
+daemon when the lock file cannot be opened; `/SMS/1` no longer matches
+`/SMS/10`; an existing log file is not touched at startup.
+
+Status: candidate, host-verified, not installed. 28 of 28 behavioural scenarios
+pass on a fake ModemManager, including the two-messages-in-one-second case, a
+poisoned empty-text key with placeholder text, a failed log append and a stuck
+multipart object. The verification harness is not published (MAP.md). An earlier
+draft that removed the text from the dedupe key could silently lose a message and
+is not published.
+
+Original work for this device, GPL-3.0-or-later; no upstream text copied.
+Body byte-identical to the local candidate patch, which is not part of this
+repository.
+--- a/devices/xiaomi-ugglite/phone-ui/ztsmsd
++++ b/devices/xiaomi-ugglite/phone-ui/ztsmsd
+@@ -14,6 +14,22 @@
+ # ztMETRO banner ("notify") on the shell's control pipe; if that pipe is not
+ # there, notify-send is tried instead.  An RSCHS/112/emergency message is
+ # prefixed as urgent, wakes the screen and plays the ringtone once.
++#
++# 2026-11-15 (sms-receive task, v2) changes vs b2786ed6, all additive:
++#   1. dedupe key stays "timestamp|number|text": the text is what tells two
++#      separate SMS from one sender delivered in the same second apart, so
++#      dropping it could silently lose the second one.  The real defect was a
++#      transient EMPTY text writing "timestamp|number|" into `seen`; that key
++#      then no longer matched the later readable text and the stored SMS was
++#      re-logged.  Fixed by also matching that legacy empty-text key whenever
++#      the text is present, and by upgrading it to the full key.
++#   2. a stuck `(receiving)` SMS (incomplete multipart, e.g. SMS/1 since
++#      2026-11-05) is detected and reported ONCE to the journal and to
++#      $STATE_DIR/receiving-stale.log.  It is never deleted here; deletion is
++#      a user decision (`mmcli -s N --delete`).
++#   3. the log line is written before the dedupe key, so a failed log append
++#      no longer loses the message (it is retried next poll).
++#   4. optional single-instance flock (manual run cannot double-log).
+ set -u
+ 
+ CONF=/etc/ztsmsd.conf
+@@ -29,12 +45,20 @@
+ : "${SLEEP:=2}"
+ : "${RING_USER:=alarm}"
+ : "${ALERT_TONE:=/usr/local/share/sounds/ztos/phone/Nokia-Tune.wav}"
++# A `(received)`-less SMS object older than this is reported as stuck.
++: "${RECEIVING_STALE_SECS:=1800}"
+ 
+ RUN_DIR=$STATE_DIR
+ SEEN="$RUN_DIR/seen"
++RECEIVING="$RUN_DIR/receiving"
++WARNED="$RUN_DIR/receiving-warned"
++STUCK_LOG="$RUN_DIR/receiving-stale.log"
+ mkdir -p "$RUN_DIR" "$(dirname "$SMS_LOG")" 2>/dev/null
+ chmod 755 "$RUN_DIR" 2>/dev/null
+-touch "$SMS_LOG" 2>/dev/null; chmod 644 "$SMS_LOG" 2>/dev/null
++# Do not `touch` an existing SMS_LOG: that rewrites its mtime and hides when the
++# last message was really appended.
++[ -e "$SMS_LOG" ] || : > "$SMS_LOG" 2>/dev/null
++chmod 644 "$SMS_LOG" 2>/dev/null
+ 
+ RING_UID=$(id -u "$RING_USER" 2>/dev/null || echo 1000)
+ : "${RING_RUNTIME:=/run/user/$RING_UID}"
+@@ -43,6 +67,14 @@
+ 	printf '%s ztsmsd: %s\n' "$(date '+%H:%M:%S')" "$*"
+ }
+ 
++# One instance only: a manual run must not duplicate log lines.
++if command -v flock >/dev/null 2>&1 && exec 9>"$RUN_DIR/lock" 2>/dev/null; then
++	if ! flock -n 9 2>/dev/null; then
++		log "another ztsmsd instance holds $RUN_DIR/lock; exiting"
++		exit 0
++	fi
++fi
++
+ shell_tell() {
+ 	ctl="$RING_RUNTIME/ztmetro.ctl"
+ 	[ -p "$ctl" ] || return 1
+@@ -106,6 +138,83 @@
+ 		head -1
+ }
+ 
++sms_timestamp_epoch() {	# ISO8601 from MM -> epoch, empty if unknown
++	[ -n "$1" ] || return 1
++	case $1 in -*|--*) return 1 ;; esac
++	date -d "$1" +%s 2>/dev/null
++}
++
++# ---------------------------------------------------------------------------
++# Stuck `(receiving)` watchdog.  MM exports incomplete multipart SMS objects
++# on purpose (mm-base-sms.c:1878) and never times them out, so one can sit in
++# `receiving` for days (SMS/1 since 2026-11-05).  We only REPORT it: deleting
++# the object is the user's decision, and deleting the wrong thing could remove
++# a real stored message.
++#   $RECEIVING lines: <path>\t<first_seen_epoch>\t<storage>\t<scts>\t<number>
++#   $WARNED lines:    <path>
++# ---------------------------------------------------------------------------
++report_stuck_receiving() {
++	local list=$1 now live p first storage scts number idx info tmp changed old
++	now=$(date +%s)
++	live=$(printf '%s\n' "$list" |
++		sed -n 's#.*\(/org/freedesktop/ModemManager1/SMS/[0-9][0-9]*\) (receiving).*#\1#p')
++
++	# Nothing receiving and no bookkeeping left: common case, do nothing.
++	if [ -z "$live" ] && [ ! -s "$RECEIVING" ] && [ ! -s "$WARNED" ]; then
++		return 0
++	fi
++	: >> "$RECEIVING" 2>/dev/null
++	: >> "$WARNED" 2>/dev/null
++
++	# Drop objects that are no longer `receiving`.
++	if [ -s "$RECEIVING" ]; then
++		tmp=$(mktemp "${TMPDIR:-/tmp}/ztsmsd.XXXXXX") || return 0
++		while IFS="$(printf '\t')" read -r p first storage scts number; do
++			[ -n "$p" ] || continue
++			printf '%s\n' "$live" | grep -Fqx "$p" && \
++				printf '%s\t%s\t%s\t%s\t%s\n' "$p" "$first" "$storage" "$scts" "$number"
++		done < "$RECEIVING" > "$tmp"
++		if cmp -s "$tmp" "$RECEIVING"; then rm -f "$tmp"; else mv "$tmp" "$RECEIVING"; fi
++	fi
++	if [ -s "$WARNED" ]; then
++		tmp=$(mktemp "${TMPDIR:-/tmp}/ztsmsd.XXXXXX") || return 0
++		while read -r p; do
++			[ -n "$p" ] || continue
++			printf '%s\n' "$live" | grep -Fqx "$p" && printf '%s\n' "$p"
++		done < "$WARNED" > "$tmp"
++		if cmp -s "$tmp" "$WARNED"; then rm -f "$tmp"; else mv "$tmp" "$WARNED"; fi
++	fi
++
++	# First sight of a receiving object: record it, seeded with the SMS
++	# timestamp when MM knows it (so a days-old orphan is reported at once,
++	# while a multipart that is still arriving gets the grace period).
++	for p in $live; do
++		# Match the first TSV field exactly: /SMS/1 must not match /SMS/10.
++		if [ -s "$RECEIVING" ] && cut -f1 "$RECEIVING" | grep -Fqx "$p"; then
++			continue
++		fi
++		idx=${p##*/}
++		info=$(mmcli -m "$MM_MODEM" -s "$idx" -K 2>/dev/null)
++		storage=$(decode_escapes "$(property "$info" storage)")
++		scts=$(decode_escapes "$(property "$info" timestamp)")
++		number=$(decode_escapes "$(property "$info" number)")
++		first=$(sms_timestamp_epoch "$scts") || first=$now
++		[ "$first" -gt "$now" ] 2>/dev/null && first=$now
++		printf '%s\t%s\t%s\t%s\t%s\n' "$p" "$first" "${storage:--}" "${scts:--}" "${number:--}" >> "$RECEIVING"
++	done
++
++	# Report objects older than the threshold, once each.
++	while IFS="$(printf '\t')" read -r p first storage scts number; do
++		[ -n "$p" ] || continue
++		grep -Fqx "$p" "$WARNED" 2>/dev/null && continue
++		[ "$((now - first))" -ge "$RECEIVING_STALE_SECS" ] 2>/dev/null || continue
++		printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$p" \
++			"$storage" "$scts" "$number" >> "$STUCK_LOG" 2>/dev/null
++		log "STUCK SMS $p state=receiving age=$((now - first))s storage=$storage scts=$scts number=$number — incomplete multipart or failed WMS read; NOT deleted (see research/ugglite-sms-receive.md)"
++		printf '%s\n' "$p" >> "$WARNED"
++	done < "$RECEIVING"
++}
++
+ while :; do
+ 	list=$(mmcli -m "$MM_MODEM" --messaging-list-sms 2>/dev/null)
+ 	if [ -z "$list" ]; then
+@@ -145,17 +254,31 @@
+ 		fi
+ 		[ -n "$number" ] || number="unknown"
+ 
+-		# MM renumbers /SMS/N after a ModemManager restart; the SMS service
+-		# timestamp does not change, so it is the stable dedupe key.
++		# Dedupe: MM renumbers /SMS/N after a ModemManager restart; the SCTS
++		# timestamp together with number+text identifies the stored message.
++		# The text is part of the key on purpose: two different SMS from one
++		# sender delivered in the same second must both be logged.  A transient
++		# empty text used to write "ts|number|" (the live `seen` still holds
++		# "2026-11-04T23:19:22+03|RSCHS|"), so that legacy empty-text key is
++		# matched as well; otherwise the readable text re-logs the SMS.
+ 		ts=$(decode_escapes "$(property "$info" timestamp)")
+-		if [ -n "$ts" ] && grep -Fqx "$ts|$number|$text" "$SEEN" 2>/dev/null; then
+-			printf '%s\n' "$key" >> "$SEEN"
++		if [ -n "$ts" ]; then
++			if grep -Fqx "$ts|$number|$text" "$SEEN" 2>/dev/null ||
++				{ [ -n "$text" ] && grep -Fqx "$ts|$number|" "$SEEN" 2>/dev/null; }; then
++				printf '%s\n' "$key" >> "$SEEN"
++				[ -n "$text" ] && printf '%s\n' "$ts|$number|$text" >> "$SEEN"
++				continue
++			fi
++		fi
++
++		# Append the message first; only then mark it seen.  If the append
++		# fails (read-only fs, full disk) the message is retried next poll
++		# instead of being silently marked as delivered.
++		if ! printf 'in\t%s\t%s\t%s\n' "$(date +%s)" "$number" "$text" >> "$SMS_LOG" 2>/dev/null; then
+ 			continue
+ 		fi
+ 		printf '%s\n' "$key" >> "$SEEN"
+ 		[ -n "$ts" ] && printf '%s\n' "$ts|$number|$text" >> "$SEEN"
+-
+-		printf 'in\t%s\t%s\t%s\n' "$(date +%s)" "$number" "$text" >> "$SMS_LOG"
+ 		log "SMS $idx from $number: $text"
+ 
+ 		if is_emergency "$number" "$text"; then
+@@ -167,5 +290,6 @@
+ 			notify "$number" "$text" 0
+ 		fi
+ 	done
++	[ "$RECEIVING_STALE_SECS" -gt 0 ] 2>/dev/null && report_stuck_receiving "$list"
+ 	sleep "$SLEEP"
+ done

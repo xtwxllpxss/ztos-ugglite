@@ -74,7 +74,10 @@ work.
   screen, answer and voice both ways; SMS reception importing messages into
   ztOS; data off/on and autoconnect. Outgoing calls are untested, SMS sending
   fails with RP cause 38, WWAN data is unclaimed (tariff allow-list). Recipe,
-  service split and scope limits: [modem.md](modem.md).
+  service split and scope limits: [modem.md](modem.md). How received messages
+  actually travel (QMI WMS, not AT), what a stuck `(receiving)` object means and
+  a host-verified dedupe candidate for the receive daemon are in
+  [SMS reception](sms.md); that candidate is not installed.
 - **GNSS engine.** Enabling `gps-raw`/`gps-nmea` produces NMEA; a satellite was
   received (SNR 31). No fix indoors is expected. No user-space client is
   installed yet; a prepared GeoClue client kit is documented, not installed:
@@ -112,10 +115,11 @@ work.
 - **Recording pacer defect.** When it falls behind, the pacer writes duplicate
   frames through the same pipe and does not write the skipped slots, so a clip
   is 1.4–1.7× shorter than the recording and plays faster than real time. This
-  is independent of resolution. A host-only retime candidate exists, but it was
-  built on the separate 720p30 source line and needs a rebase and a rebuild on
-  the live application line before it could be installed; it is not published
-  (see [two source lineages](camera-video.md#two-source-lineages)).
+  is independent of resolution. The retime candidate was rebased onto the live
+  application line and is published as a host-verified candidate
+  ([`0004-pacer-retime.patch`](../patches/userspace/ztcamera/)); it has not been
+  run on the phone (see [two source lineages](camera-video.md#two-source-lineages)
+  and [SERIES](../SERIES.md)).
 - **Low-light exposure, installed build.** In the 1280×720 mode the driver
   clamps exposure to 1/120 s until vertical blanking is raised, so night frames
   are dark and noisy. The candidate build raises vertical blanking and reaches
@@ -123,7 +127,9 @@ work.
 - **Camera quality.** Colour calibration, AE/ISO, AF feel and front-preview
   orientation/mirroring. A host-only candidate adds fixed ISO/shutter environment
   overrides for calibration; it is not installed and was not measured on the
-  sensor, so no manual-exposure claim is made.
+  sensor, so no manual-exposure claim is made, and its source line is not part of
+  this repository (see [camera and video](camera-video.md)). The AF settle/boost
+  candidate is published as a source patch, unmeasured on the sensor.
 - **Microphone.** The capture route is proven; gain candidates
   (`ADC1 Volume` 6→8, `TX1 Digital Volume` 84→88) are not accepted.
 - **SMS sending.** Fails with RP cause 38. The SIM reports an FDN lock, which is
@@ -143,10 +149,15 @@ work.
   the stock encoder is published as a candidate kernel patch
   (`patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch`): it applies
   to the pinned tree and the Venus directory cross-builds, but it was never
-  built into a full kernel, booted or measured on the device. A camera-side
-  recording backend that feeds the encoder exists as a host-only candidate and
-  is not published (see [MAP](../MAP.md)). Recording still uses the software
-  encoder.
+  built into a full kernel, booted or measured on the device. `venus` is a
+  module, so the fix does not need a rebuilt Image at all — the 2026-11-15
+  module build produced `venus-core.ko` with the running kernel's vermagic and
+  an identical symbol set; those modules were built host-side, are not
+  published and were never installed or loaded (details in
+  [Venus](venus.md#the-fix-is-one-module-replacement--no-image-rebuild)). A
+  camera-side recording backend that feeds the encoder exists as a host-only
+  candidate and is not published (see [MAP](../MAP.md)). Recording still uses
+  the software encoder.
 - **Suspend and automatic brightness.** `deep` is not supported by the firmware
   (PSCI reports `NOT_SUPPORTED`); only `s2idle` is available and screen-off draw
   is not measured. An ambient-light channel does not exist, so automatic
@@ -175,7 +186,8 @@ The kit scripts are not part of this repository; [MAP](../MAP.md) states why. A
 separate opt-in 180° auto-rotate candidate exists on the host, but it is an
 installable binary whose base is not reproducible from the published series and
 its orientation polarity is unproven, so it is deferred rather than published;
-the shell does not rotate today.
+the shell does not rotate today. Its design, acceptance boundary and risk are in
+[auto-rotate](auto-rotate.md).
 
 ## Unverified
 

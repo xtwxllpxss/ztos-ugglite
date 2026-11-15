@@ -70,6 +70,23 @@ Unknown or unclear licence → **excluded**, with the reason written down in
   revision. Derivative of a `GPL-2.0-or-later` upstream file, distributed under
   the "or later" option; hunk bytes unchanged. Its header records the
   before/after source hashes and the installed ELF hash.
+* `patches/userspace/ztcamera/0002-…`, `0003-…`, `0004-…` — the camera-application
+  candidates (720p30 vertical-blanking cap, AF settle/boost, pacer retime) applied
+  on top of the accepted source `166d8d04`. Derivative of the same
+  `GPL-2.0-or-later` upstream file as `0001`, distributed under the "or later"
+  option. The diff bodies are byte-identical to the local camera kit files (same
+  inputs as the accepted build's lineage); each header was rewritten to state the
+  public series position, the base and result source hashes, the apply command
+  and the honest candidate status. No host path appears in the bodies.
+* `devices/xiaomi-ugglite/phone-ui/ztsmsd` — the SMS receive daemon as installed
+  on the device, published verbatim (sha256 `b2786ed6…`, identical to the live
+  readback). Original work for this device, `GPL-3.0-or-later`; it contains no
+  message content, no sender numbers and no host path.
+* `devices/xiaomi-ugglite/phone-ui/ztsmsd-dedupe-v2.patch` — candidate delta
+  against that file, base `b2786ed6…` → result `c8a704b4…`, applied and checked
+  in a copy of the tree before publication. Same terms as the file it modifies
+  (original device-layer work). The rejected first draft, which dropped the
+  message text from the dedupe key and could lose a message, is **not** published.
 * `devices/xiaomi-ugglite/audio/VoiceCall.conf` and the `Voice Call` use case in
   `audio/xiaomi-ugg.conf` — UCM written for this device from the working mixer
   state; GPL-3.0-or-later like the rest of the device layer. Control names and
@@ -143,6 +160,21 @@ re-measured; here they are attributed, not asserted.
   Qualcomm firmware, but contains no firmware bytes, no firmware hash list, no
   installer and no host path. The firmware remains Qualcomm's property and is
   not redistributed here.
+* `docs/auto-rotate.md` — original English text written for this repository from
+  the prepared rotation kit. Mechanism, kit shape, acceptance order and the
+  unproven orientation polarity; no ELF, no patch, no install script, no host
+  path or device identifier.
+* `docs/sms.md` — original English text written for this repository from the SMS
+  receive work. The ModemManager QMI path is described in prose from reading the
+  pinned sources; no message content, sender number, SMSC or live readback is
+  copied, and the diagnostic scripts are not published.
+* `docs/recovery.md` — original English text written for this repository from the
+  verified recovery runbook, reduced to a decision tree: boot ids, image hashes,
+  host paths and the partition-writing restore script were deliberately removed.
+* The section "The fix is one module replacement — no Image rebuild" in
+  `docs/venus.md` — original English text written from the 2026-11-15 module
+  build (vermagic, `srcversion` and symbol-set comparison, object-level A/B).
+  The module binaries and disassembly are not published.
 * `docs/gnss.md`, `docs/waydroid.md` — original English text written for this
   repository from the prepared host-only kits (GeoClue client, Waydroid freeze
   policy). They describe the design, the verification boundary and the

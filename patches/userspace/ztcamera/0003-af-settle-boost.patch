@@ -1,0 +1,162 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-FileCopyrightText: the ztOS authors (upstream file below)
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch 0003 of the ztOS camera-application candidates. Target:
+ztmetro/camera/ztcamera.c at ztOS
+94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf, the pinned upstream revision.
+
+Base: source sha256
+5647a698e1db38b0af0c911a3ad2a0df1576c69bd9dbab3a6d7645dbcb17ebee (result of
+0002).
+Result: source sha256
+4636d552fcd90000602513b8a520c9f746226f82e84635a4c94fd0ef269ed71d.
+
+Apply after 0001, from the ztOS checkout's `ztmetro/` directory, with GNU
+`patch` (the diff paths are relative to that directory, as in the local camera
+kit); the header above is skipped by patch:
+
+    cd ztmetro
+    patch -p1 -F0 < ../patches/userspace/ztcamera/0003-af-settle-boost.patch
+
+Effect: raises the AF settle from 110 ms to 170 ms (more than two 15 fps
+frames), waits 280 ms at every position of a dark boosted sweep, clears the
+held flag after a boost, logs cancelled sweeps and raises the sweep timeout to
+9000 ms. Needs the `af_boost` code of the accepted line: it does not apply to
+the camera-v3 720p30 line (4 of 10 hunks fail there), and no build of that line
+contains it.
+
+Status: candidate, not accepted state. Host-verified: applies to the published
+chain without fuzz and reproduces the source hash above; the AF candidate build
+and the vblank + AF build were each built twice byte-identically and passed the
+artifact check host-side. Optical AF criteria were never measured: no candidate
+has been run on the phone.
+
+Derivative of a GPL-2.0-or-later upstream file, distributed under the "or
+later" option; upstream copyright stays with the ztOS authors.
+Header rewritten for this series position; the diff body is byte-identical to
+the local camera kit copy, which is not part of this repository.
+--- a/camera/ztcamera.c	2026-11-09 16:11:59.554099766 +0300
++++ b/camera/ztcamera.c	2026-11-09 16:11:59.557156222 +0300
+@@ -159,12 +159,19 @@
+  * the picture is scored by its Tenengrad (Sobel) detail, the sharpest is kept,
+  * the parabola through its two neighbours puts the lens between samples, and
+  * the lens is left there. A fixed number of moves, no feedback loop: 14
+- * positions, about 1.8-2.1 s, and a stalled frame clock ends it by timeout
+- * rather than leaving it running. */
++ * positions, and a stalled frame clock ends it by timeout rather than leaving
++ * it running.
++ *
++ * 170 ms is deliberately more than two 15 fps frames (133 ms): the node is
++ * streamed at 15 fps while the exposure control is scaled for 30 fps, and the
++ * V4L2 queue can hand over a frame captured before the lens write. 110 ms was
++ * less than two frames and let a stale frame be scored; a dark boosted sweep
++ * waits AF_BOOST_SETTLE_MS at every position instead, because its longer
++ * integration and the lens move overlap at 110 ms. */
+ #define FOCUS_COARSE_STEPS	7	/* the range in a few moves, enough to find the hill */
+ #define FOCUS_FINE_STEPS	7	/* then four times finer around the coarse best */
+-#define FOCUS_SETTLE_MS		110	/* lens and exposure settle before a frame counts */
+-#define FOCUS_SWEEP_TIMEOUT_MS	6000	/* the whole two-stage sweep, not one position */
++#define FOCUS_SETTLE_MS		170	/* > two 15 fps frames, so the scored frame is after the lens write */
++#define FOCUS_SWEEP_TIMEOUT_MS	9000	/* the whole two-stage sweep; 14 x 280 ms boosted + frame quantisation */
+ #define FOCUS_REGION		0.60	/* the middle of the frame, as a fraction */
+ #define FOCUS_FINE_SPAN		0.55	/* fine half-window, in coarse intervals */
+ 
+@@ -216,7 +223,7 @@
+  * hunting in a dark room, but a light switched on is noticed via the luma
+  * change and retried at once. */
+ #define AF_DARK_RETRY_MS	15000
+-#define AF_BOOST_SETTLE_MS	280	/* the sensor lags two frames; score after this */
++#define AF_BOOST_SETTLE_MS	280	/* every boosted position, not only the first: sensor and lens lag */
+ 
+ static struct {
+ 	bool enabled;		/* a lens was found with this source */
+@@ -1133,8 +1140,13 @@
+ 	af_boost_restore();
+ 	afc.scene = false;
+ 	scene.have = false;	/* the scene reference is new after the lens moved */
+-	if (why && !was_auto) {
+-		note("%s", why);
++	if (why) {
++		/* an automatic sweep used to cancel silently: the one line that
++		 * says why (dark, clipped, timeout) must reach the log too */
++		fprintf(stderr, "ztcamera: af sweep cancelled: %s\n", why);
++		if (!was_auto) {
++			note("%s", why);
++		}
+ 	}
+ 	if (was_auto) {
+ 		/* a failed opening sweep must not become the monitor's baseline:
+@@ -1145,6 +1157,13 @@
+ 	chrome_redraw_mark();
+ }
+ 
++/* A boosted dark sweep keeps the longer settle at every position: there the
++ * integration is longer and a 110 ms frame can still straddle the lens move,
++ * while the unboosted path is covered by the 170 ms constant. */
++static uint32_t focus_settle_ms(void) {
++	return af_boost.active ? AF_BOOST_SETTLE_MS : FOCUS_SETTLE_MS;
++}
++
+ /* false when the lens, a menu, the recorder or the exposure mean "not now". */
+ static bool focus_sweep_start(bool automatic) {
+ 	if (lens_fd < 0 || src.kind != SRC_V4L2 || !src.bayer) {
+@@ -1185,7 +1204,7 @@
+ 	uint32_t now = zmc_now_ms();
+ 	sweep.active = true;
+ 	sweep.started = now;
+-	sweep.deadline = now + (af_boost.active ? AF_BOOST_SETTLE_MS : FOCUS_SETTLE_MS);
++	sweep.deadline = now + focus_settle_ms();
+ 	ui.focusing = false;
+ 	ui.focused = false;
+ 	if (!automatic) {
+@@ -1245,6 +1264,7 @@
+ 		step = lens_range.maximum;
+ 	}
+ 	bool was_auto = sweep.automatic;
++	bool boosted = af_boost.active;
+ 	sweep.active = false;
+ 	if (lens_set_value(step)) {
+ 		if (!was_auto) {
+@@ -1256,8 +1276,12 @@
+ 		}
+ 		ui.focusing = false;
+ 		ui.focused = true;
+-		/* the normalised sharpness this position settled on: the monitor's baseline */
+-		afc.held = norm;
++		/* The normalised sharpness this position settled on is the monitor's
++		 * baseline — except after a boost: that score was taken at a different
++		 * exposure and gain, so its mean-normalised value is not comparable
++		 * with the restored one. Zero makes the first post-restore frame the
++		 * baseline instead of a number that could keep the monitor silent. */
++		afc.held = boosted ? 0 : norm;
+ 		afc.low = false;
+ 		afc.low_since = 0;
+ 		afc.primed = true;	/* a tap is as good as the opening sweep */
+@@ -1304,7 +1328,7 @@
+ 				"focus: frame is clipped");
+ 			return;
+ 		}
+-		sweep.deadline = now + FOCUS_SETTLE_MS / 2;
++		sweep.deadline = now + focus_settle_ms() / 2;
+ 		return;
+ 	}
+ 	if (score < 0) {
+@@ -1332,7 +1356,7 @@
+ 				focus_sweep_cancel("focus: lens write failed");
+ 				return;
+ 			}
+-			sweep.deadline = now + FOCUS_SETTLE_MS;
++			sweep.deadline = now + focus_settle_ms();
+ 			return;
+ 		}
+ 		focus_sweep_finish();
+@@ -1343,7 +1367,7 @@
+ 		focus_sweep_cancel("focus: lens write failed");
+ 		return;
+ 	}
+-	sweep.deadline = now + FOCUS_SETTLE_MS;
++	sweep.deadline = now + focus_settle_ms();
+ }
+ 
+ /* A sweep started by the monitor rather than by a finger. The lens moves in a

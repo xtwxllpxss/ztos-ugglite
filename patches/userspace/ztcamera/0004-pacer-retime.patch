@@ -1,0 +1,156 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-FileCopyrightText: the ztOS authors (upstream file below)
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch 0004 of the ztOS camera-application candidates. Target:
+ztmetro/camera/ztcamera.c at ztOS
+94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf, the pinned upstream revision.
+
+Base: source sha256
+4636d552fcd90000602513b8a520c9f746226f82e84635a4c94fd0ef269ed71d (result of
+0003).
+Result: source sha256
+5846f8d64d3c5d44df09051df510162c5ed1fe439746ee2b41e533f28f35d1e7.
+
+Apply after 0001, from the ztOS checkout's `ztmetro/` directory, with GNU
+`patch` (the diff paths are relative to that directory, as in the local camera
+kit); the header above is skipped by patch:
+
+    cd ztmetro
+    patch -p1 -F0 < ../patches/userspace/ztcamera/0004-pacer-retime.patch
+
+Effect: the encoder writes to <path>.part; when recording stops, the
+container timeline is retimed to the wall clock with an `-itsscale` stream copy
+(no frame added, dropped or re-encoded), then renamed into place. On any
+failure the old behaviour is kept, so a clip is never lost. This removes the
+1.4-1.7x speed-up; it does not raise the unique-frame ceiling.
+
+Status: candidate, not accepted state. Host-verified: rebased onto the live
+application line and applies with -F0 without fuzz or offset; the diff body is
+identical to the original pacer diff. Offline check on real clips: 6.533 s of
+file retimed to 10.632 s against 10.633 s of wall clock, 196/196 frames, decode
+rc=0. The pacer candidate build (vblank + AF + retime) was built twice
+byte-identically and passed the artifact check host-side; it was never run on
+the phone and is not installed.
+
+Derivative of a GPL-2.0-or-later upstream file, distributed under the "or
+later" option; upstream copyright stays with the ztOS authors.
+Header rewritten for this series position; the diff body is byte-identical to
+the local camera kit copy, which is not part of this repository.
+--- a/camera/ztcamera.c
++++ b/camera/ztcamera.c
+@@ -2521,6 +2521,14 @@
+ 	snprintf(ui.rec_path, sizeof(ui.rec_path), "%s/VID_%02d%02d%02d_%02d%02d%02d.mkv",
+ 		roll_dir, tm.tm_year % 100, tm.tm_mon + 1, tm.tm_mday,
+ 		tm.tm_hour, tm.tm_min, tm.tm_sec);
++	/* The encoder writes a live file first. Its timeline is the pacer's frame
++	 * clock, and an encoder that cannot take REC_FPS shortens it; record_stop()
++	 * then trades that file for the real path with the timeline scaled to the
++	 * wall clock it was shot by. A clip whose encoder was killed must not
++	 * block the next recording's -n in a way nothing cleans up. */
++	char live[sizeof(ui.rec_path) + 8];
++	snprintf(live, sizeof(live), "%s.part", ui.rec_path);
++	unlink(live);
+ 	char size[32], rate[8], crf[8], maxrate[16];
+ 	snprintf(size, sizeof(size), "%dx%d", rec_w, rec_h);
+ 	snprintf(rate, sizeof(rate), "%d", REC_FPS);
+@@ -2545,7 +2553,7 @@
+ 			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+ 			"-threads", "4", "-pix_fmt", "yuv420p", "-crf", crf,
+ 			"-maxrate", maxrate, "-bufsize", maxrate,
+-			ui.rec_path, (char *)NULL);
++			"-f", "matroska", live, (char *)NULL);
+ 		_exit(127);
+ 	}
+ 	close(stream[1]);
+@@ -2563,8 +2571,59 @@
+ 	chrome_redraw_mark();
+ }
+ 
++/*
++ * The recorder's timeline. The pacer writes frames at REC_FPS whatever the
++ * encoder keeps up with: slots it cannot afford are counted in rec_skipped and
++ * not written (REC_FILL_SLOTS caps the burst so a stalled encoder cannot block
++ * the viewfinder in frame_arrived). The mkv therefore holds written/REC_FPS
++ * seconds - for real 720p30 that was 6.5 s of file for 10.6 s of recording,
++ * which plays 1.6x fast. The encoder cannot be made to take 30 fps on this SoC,
++ * so the file's timeline is fixed once the encoder is done, from the only clock
++ * that saw the whole recording - the wall clock: the live file's timestamps are
++ * scaled by wall/file with a stream copy. Nothing is re-encoded and no frame is
++ * added or dropped; the same frames are shown over the time they were shot.
++ * Returns true when the live file was traded for the retimed one.
++ */
++static bool record_retime(const char *live, const char *out, double factor) {
++	char scale[32], tmp[sizeof(ui.rec_path) + 8];
++	snprintf(scale, sizeof(scale), "%.6f", factor);
++	snprintf(tmp, sizeof(tmp), "%s.retime", out);
++	pid_t pid = fork();
++	if (pid == 0) {
++		execlp("ffmpeg", "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
++			"-itsscale", scale, "-i", live, "-c", "copy",
++			"-f", "matroska", tmp, (char *)NULL);
++		_exit(127);
++	}
++	if (pid < 0) {
++		return false;
++	}
++	int status = 0;
++	for (int waited = 0; waited < 8000; waited += 20) {
++		pid_t done = waitpid(pid, &status, WNOHANG);
++		if (done == pid) {
++			if (WIFEXITED(status) && WEXITSTATUS(status) == 0 &&
++			    rename(tmp, out) == 0) {
++				unlink(live);
++				return true;
++			}
++			unlink(tmp);
++			return false;
++		}
++		if (done < 0 && errno != EINTR) {
++			return false;
++		}
++		usleep(20000);
++	}
++	kill(pid, SIGKILL);
++	while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
++	unlink(tmp);
++	return false;
++}
++
+ static void record_stop(const char *why) {
+ 	if (!ui.recording) return;
++	uint32_t wall_ms = zmc_now_ms() - ui.rec_start;
+ 	ui.recording = false;
+ 	close(ui.rec_fd);
+ 	ui.rec_fd = -1;
+@@ -2596,6 +2655,30 @@
+ 		"%u skipped, worst frame write %u ms\n", ui.rec_path, ui.rec_written,
+ 		(double)ui.rec_written / REC_FPS, REC_FPS, ui.rec_repeated, ui.rec_skipped,
+ 		ui.rec_worst_ms);
++	/* The skipped slots are recording time the container does not have:
++	 * stretch the file's timestamps to the wall clock it was shot by. One
++	 * frame at the end keeps its own duration, so the timeline is
++	 * (written - 1) frame periods to scale, the first one to keep. */
++	char live[sizeof(ui.rec_path) + 8];
++	snprintf(live, sizeof(live), "%s.part", ui.rec_path);
++	double frame_ms = 1000.0 / REC_FPS;
++	double nominal_ms = (double)ui.rec_written * frame_ms;
++	double factor = 1.0;
++	if (ui.rec_written >= 2) {
++		factor = ((double)wall_ms - frame_ms) / (nominal_ms - frame_ms);
++	}
++	bool retimed = false;
++	if (factor > 0.5 && fabs(factor - 1.0) > 0.02) {
++		retimed = record_retime(live, ui.rec_path, factor);
++		if (retimed) {
++			fprintf(stderr, "ztcamera: video retimed: %.2f s of file at %d fps -> "
++				"%.2f s of wall clock (x%.4f)\n", nominal_ms / 1000.0, REC_FPS,
++				(double)wall_ms / 1000.0, factor);
++		}
++	}
++	if (!retimed && rename(live, ui.rec_path) != 0) {
++		note("video file: %s", strerror(errno));
++	}
+ 	roll_scan();
+ 	if (result > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0)
+ 		note("%s: %s", why ? why : "recorded", ui.rec_path);

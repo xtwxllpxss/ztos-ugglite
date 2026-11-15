@@ -1,0 +1,89 @@
+SPDX-FileCopyrightText: 2026 the ztos-ugglite contributors
+SPDX-FileCopyrightText: the ztOS authors (upstream file below)
+SPDX-License-Identifier: GPL-3.0-or-later
+
+Patch 0002 of the ztOS camera-application candidates. Target:
+ztmetro/camera/ztcamera.c at ztOS
+94b35c2a1f4ceb568bc0ab60f5a1acebe7cfefaf, the pinned upstream revision.
+
+Base: the accepted composed delta 0001 applied, i.e. source sha256
+166d8d0490d328cf14ef7d173531eb9f24d94b7bb8450b64e2bb4ed566cacab0, the source
+of the installed application.
+Result: source sha256
+5647a698e1db38b0af0c911a3ad2a0df1576c69bd9dbab3a6d7645dbcb17ebee.
+
+Apply after 0001, from the ztOS checkout's `ztmetro/` directory, with GNU
+`patch` (the diff paths are relative to that directory, as in the local camera
+kit); the header above is skipped by patch:
+
+    cd ztmetro
+    patch -p1 -F0 < ../patches/userspace/ztcamera/0002-sensor-720p30-cap.patch
+
+Effect: after STREAMON, on `s5k3l8` only and only when the VBLANK control's
+maximum is 0xffff-720, writes V4L2_CID_VBLANK 2530 (VTS 3250, 29.8 fps) and
+re-reads the exposure range, which widens to 1/30 s (804 -> 3242 lines). The
+same file applied to the camera-v3 line gives the accepted 720p30 source
+0742a21d.
+
+Status: candidate, not accepted state. Host-verified: applies to the published
+chain without fuzz and reproduces the source hash above. The candidate build
+that contains it (vblank + AF settle) was built twice byte-identically and
+passed the artifact check host-side; it was never run on the phone and is not
+installed.
+
+Derivative of a GPL-2.0-or-later upstream file, distributed under the "or
+later" option; upstream copyright stays with the ztOS authors.
+Header rewritten for this series position; the diff body is byte-identical to
+the local camera kit copy, which is not part of this repository.
+--- a/camera/ztcamera.c
++++ b/camera/ztcamera.c
+@@ -556,6 +556,49 @@
+ 	fprintf(stderr, "ztcamera: sensor %.48s: exposure %d..%d, analogue gain %d..%d, now %d/%d\n",
+ 		best_name, best_exp.minimum, best_exp.maximum, best_gain.minimum,
+ 		best_gain.maximum, snr.coarse, snr.again);
++	/* Match the sensor's frame time to the rate the recorder writes, instead of
++	 * leaving the 1280x720 mode at its table default. That mode's register set
++	 * has VTS 812 lines = 120 fps at the 562.5 MHz pixel clock (5808 x 812 x
++	 * 119.3 was read off the live stream's timestamps), which (a) burns 4x the
++	 * CSI/VFE/DMA and interrupt budget this app can consume, (b) gives the
++	 * exposure control a 1/120 s frame, so 804 lines is its maximum and the AE
++	 * clamps there although the shutter dial is scaled for 1/30 s (V4L2_AE_FPS),
++	 * which is why dark scenes stay dark. One frame must be REC_PERIOD_MS.
++	 * VTS 3250 is the sensor's own 30 fps timing (the 4208x3120 mode uses the
++	 * same value, 29.8 fps here); 24 fps needs 4036, 15 fps 6458. VBLANK is a
++	 * writable control: s5k2xx_set_ctrl() writes FLL = height + vblank and
++	 * widens the exposure range to height + vblank - 8 in the same call. This
++	 * runs after STREAMON, so the sensor is powered and the write lands. */
++	if (strstr(best_name, "s5k3l8")) {
++		const int height = 720;		/* the 1280x720 mode */
++		int want = (int)(REC_FPS + 0.5), vts;
++		struct v4l2_queryctrl vq;
++		struct v4l2_control vb = { .id = V4L2_CID_VBLANK };
++		memset(&vq, 0, sizeof(vq));
++		vq.id = V4L2_CID_VBLANK;
++		if (want < 5) {
++			want = 5;
++		}
++		vts = want >= 30 ? 3250 : (int)(562500000.0 / (5808.0 * want) + 0.5);
++		/* only the 720p mode's VBLANK range ends at FLL_MAX - 720 */
++		if (ioctl(best, VIDIOC_QUERYCTRL, &vq) == 0 &&
++		    vq.maximum == (int)(0xffff - height) &&
++		    ioctl(best, VIDIOC_G_CTRL, &vb) == 0 &&
++		    vb.value != vts - height) {
++			struct v4l2_control set = { .id = V4L2_CID_VBLANK, .value = vts - height };
++			if (ioctl(best, VIDIOC_S_CTRL, &set) == 0) {
++				struct v4l2_queryctrl wide;
++				/* the driver rewrites the exposure range for the new VTS */
++				if (sensor_query(best, V4L2_CID_EXPOSURE, &wide)) {
++					snr.exp = wide;
++					snr.coarse = clamp_int(snr.coarse, snr.exp.minimum, snr.exp.maximum);
++				}
++				fprintf(stderr, "ztcamera: sensor timing: vblank %d -> %d, VTS %d lines (%.1f fps), exposure max %d\n",
++					vb.value, set.value, vts,
++					562500000.0 / (5808.0 * vts), snr.exp.maximum);
++			}
++		}
++	}
+ }
+ 
+ static bool sensor_write(uint32_t id, int value, const char *what) {

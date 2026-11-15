@@ -9,7 +9,8 @@ deliberately left out. It is the authoritative map for licensing questions.
 |---|---|---|---|
 | Device layer and docs (original work) | `device.toml`, `layer.sh`, `fixups.sh`, `packages.txt`, `overlay/**`, `docs/**`, `README*`, this file, `CONTRIBUTING.md` | GPL-3.0-or-later | Written for this adaptation; same licence family as the ztOS tree the layer plugs into. |
 | Patches against ztOS userspace | the five `.patch` files under `devices/xiaomi-ugglite/patches/` (each listed in `ATTRIBUTION.md`) | GPL-3.0-or-later | The upstream files they modify carry `GPL-2.0-or-later` in their SPDX headers. The patches are distributed under GPL-3.0-or-later by exercising the upstream "or any later version" option; the upstream grant itself is **not** GPL-3.0. Copyright in the upstream code stays with the ztOS authors. |
-| Userspace patch series | `patches/userspace/ztmetro/0001`–`0006`, `patches/userspace/ztcamera/0001` and `experimental/` (same upstream terms) | GPL-3.0-or-later | Same basis as the device-layer copies; series position and source base are documented in SERIES.md. |
+| Userspace patch series | `patches/userspace/ztmetro/0001`–`0006`, `patches/userspace/ztcamera/0001`–`0004` (0002–0004 are candidates) and `experimental/` (same upstream terms) | GPL-3.0-or-later | Same basis as the device-layer copies; series position, base and candidate status are documented in SERIES.md. |
+| Device-layer scripts and their deltas | `devices/xiaomi-ugglite/phone-ui/ztsmsd` and `ztsmsd-dedupe-v2.patch` (candidate), plus the existing device-layer scripts under `devices/xiaomi-ugglite/` | GPL-3.0-or-later | Original work written for this adaptation; the daemon is the installed file published verbatim, its delta is our own change. The device layer's copied upstream helpers keep their own GPL-3.0-or-later/hybrid headers as stated in PROVENANCE.md. |
 | Kernel patches | `patches/kernel/0001-wcn36xx-dynamic-ra-start-rate.patch`, `patches/kernel/0002-dsi-preserve-video-clocks.patch`, `patches/kernel/0003-venus-hfi3xx-skip-h264-8x8-transform.patch`, `patches/kernel/experimental/` | GPL-2.0-only | Derivatives of the Linux kernel files they modify. The "or later" option does **not** exist for the kernel tree, so no GPL-3.0 label is applied. Upstream copyright is retained and nothing further is granted. |
 | Licence texts | `LICENSES/GPL-3.0-or-later.txt`, `LICENSES/GPL-2.0-only.txt` | verbatim texts | GPL-3.0 copied unmodified from the ztOS repository (`upstream/ztOS/LICENSE`, 232 lines, sha256 `fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0`). GPL-2.0 copied unmodified from the FSF's canonical publication <https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt> (17 984 bytes, sha256 `edaef632cbb643e4e7a221717a6c441a4c1a7c918e6e4d56debc3d8739b233f6`). |
 
@@ -59,6 +60,8 @@ Included device files:
 - `audio/VoiceCall.conf` (the installed UCM voice-call verb; mixer control names
   and values only) and the `Voice Call` use case it adds to
   `audio/xiaomi-ugg.conf`
+- `phone-ui/ztsmsd` (the installed SMS receive daemon, published verbatim so the
+  published candidate delta applies to a real base; no message content)
 
 ## Deliberate exclusions
 
