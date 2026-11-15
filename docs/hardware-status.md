@@ -189,6 +189,29 @@ its orientation polarity is unproven, so it is deferred rather than published;
 the shell does not rotate today. Its design, acceptance boundary and risk are in
 [auto-rotate](auto-rotate.md).
 
+## Host-only analyses — not applied
+
+Three documents record host-only work that has **not** been applied to the
+device. None of them is an installed feature, a measured improvement or an
+accepted change.
+
+- **Splash holds for ~51 s.** The measured figure is compositor-internal: the
+  splash is removed at 51.0 s because a boot gate waits up to 45 s for a
+  Waydroid/Android readiness marker that this install never writes (the upstream
+  boot integration is not installed; the Waydroid configuration exists, so the
+  "not installed" branch is false). Sensor readiness is not the blocker. A
+  host-built compositor candidate removes the Android wait (51 s → ~6 s
+  expected, arithmetic on the saved log); it is not installed and was never run
+  on the phone. Pre-compositor boot time is not measured. Details, A/B and
+  rollback: [boot time](boot-time.md).
+- **Memory and browser.** zram (900 MB, `lz4`, `swappiness=100`) is active; the
+  prepared changes are three sysctl values and one Firefox policy file, all
+  reversible and none applied — [performance and memory](performance.md).
+- **Thermal and charging.** The vendor trip points (75/85/100 °C) already match
+  the stock device tree, there is no user-space thermal daemon by design, and
+  charging is clamped to 1 A / 4.208 V. Analysis only, no change made —
+  [thermal and charging](thermal.md).
+
 ## Unverified
 
 - Waydroid: not exercised end to end. Only the prepared freeze-policy helper

@@ -19,6 +19,7 @@ are still unverified or broken.
 |---|---|
 | Boot, persistent (lk2nd + ztOS boot slot) | works — host-free reboots; stock boot image backed up for rollback |
 | Boot, RAM candidates (`fastboot boot`) | works — tests a kernel/DT without touching the slot |
+| Boot time / splash | the splash stays up for ~51 s because a boot gate waits 45 s for a Waydroid marker this install never writes; a host-built compositor candidate removes the wait (51 → ~6 s expected), it is not installed — [docs/boot-time.md](docs/boot-time.md) |
 | Display, baseline | works — confirmed by the device owner |
 | Display brightness | Works on the accepted persistent install with preserved DSI video clocks. The owner confirmed smooth adjustment without frame shift |
 | Wi-Fi | associates and passes traffic; rate/throughput under load not fixed |
@@ -31,8 +32,10 @@ are still unverified or broken.
 | Front camera | S5K5E8 chip ID `0x5e80` and both CSI links verified, first frame captured; owner reports the camera working. Preview orientation/mirroring and higher modes not accepted |
 | Rear torch | works — DT-only `gpio-leds` node `white:torch` on gpio34, writable by the UI through a udev rule; `max_brightness=1`, on/off only. GPIO mapping is vendor-derived |
 | Updates | `ztos-update check` completes; `apply` upgrades in a single `pacman -Syu` transaction |
+| Memory / browser | zram (900 MB, `lz4`) is active; the prepared memory and Firefox changes are host-only recommendations, none applied — [docs/performance.md](docs/performance.md) |
 | Venus hardware video encode | probe passes in a running boot and a synthetic 720p H.264 encode works, but the firmware is device-local and not published, boot-time persistence is untested and the camera does not use it yet. The source fix for the stock-encoder HFI bug is a candidate kernel patch, cross-built but not booted; `venus` is a module, so the same fix can be delivered as one module replacement without rebuilding the kernel image (modules built host-side, not delivered) — [docs/venus.md](docs/venus.md), [SERIES.md](SERIES.md) |
 | Waydroid | unverified; only a prepared freeze-policy helper exists and it is not installed — [docs/waydroid.md](docs/waydroid.md) |
+| Thermal / charging | the vendor trip points (75/85/100 °C) and the 1 A / 4.208 V charge clamp are already correct; there is no user-space thermal daemon by design; analysis only, nothing changed — [docs/thermal.md](docs/thermal.md) |
 | Suspend | `deep` unsupported by firmware; only `s2idle` available, screen-off power not measured |
 
 Details and the exact evidence boundary: [docs/hardware-status.md](docs/hardware-status.md).
@@ -58,7 +61,7 @@ build-environment/
   prepare-kernel.sh           kernel build in a separate container, pinned pmaports
   finalize-kernel.sh          in-container build/verify/export, refuses drift
   repack-boot-init.py         replace only init inside an existing boot image
-docs/                         hardware status, camera and video (two source lineages), Venus, SMS reception, auto-rotate, recovery, GNSS client, Waydroid, safety
+docs/                         hardware status, camera and video (two source lineages), Venus, SMS reception, auto-rotate, recovery, GNSS client, Waydroid, boot time, performance, thermal, safety
 SERIES.md                     patch order, base commits, hash chain, apply commands
 PROVENANCE.md                 per-file licence terms and derivation
 MAP.md                        every working component → path, or why excluded

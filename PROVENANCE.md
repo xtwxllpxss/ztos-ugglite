@@ -182,6 +182,29 @@ re-measured; here they are attributed, not asserted.
   payload or per-device identifier. The kit scripts themselves are not
   published; the reason is in `MAP.md`.
 
+## Provenance of the boot-time, performance and thermal documents
+
+* `docs/boot-time.md` — original English text written for this repository from
+  the host-only boot-time analysis. It describes the upstream compositor's boot
+  gate and the candidate delta in prose: no upstream source is copied, and no
+  patch body, ELF or host path is included. The 51 s figures are quoted from a
+  saved log of the running install, not re-measured for this repository; the
+  candidate hashes are host-build facts. The patch is not published; its
+  location in the private work tree and the reason are stated in `MAP.md`.
+* `docs/performance.md` — original English text written for this repository from
+  the memory and browser analysis. Configuration values (sysctls, Firefox
+  preferences) are facts about the respective software's documented interfaces,
+  not copied prose; estimates are labelled as such. No kit script, host path or
+  per-device identifier is included.
+* `docs/thermal.md` — original English text written for this repository from the
+  pinned kernel device tree and configuration and saved power-supply readbacks.
+  It restates trip points, cooling maps and charger limits as values, copies no
+  vendor text, and contains no run log, bus address, device identifier or host
+  path. No change described there was applied.
+* The corresponding updates to `README.md`, `README.ru.md`,
+  `docs/hardware-status.md` and `MAP.md` are original text under the same terms
+  as the rest of `docs/**`.
+
 ## Display, camera and battery milestone
 
 - Userspace 0006 copies the accepted battery discovery delta against the pinned
