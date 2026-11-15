@@ -133,7 +133,9 @@ work.
   overrides for calibration; it is not installed and was not measured on the
   sensor, so no manual-exposure claim is made, and its source line is not part of
   this repository (see [camera and video](camera-video.md)). The AF settle/boost
-  candidate is published as a source patch, unmeasured on the sensor.
+  candidate is published as a source patch, unmeasured on the sensor; a separate
+  retry-based build from the local camera line is installed and measured — see
+  the camera update at the end of this file.
 - **Microphone.** The capture route is proven; gain candidates
   (`ADC1 Volume` 6→8, `TX1 Digital Volume` 84→88) are not accepted.
 - **SMS sending.** Fails with RP cause 38. The SIM reports an FDN lock, which is
@@ -195,19 +197,11 @@ the shell does not rotate today. Its design, acceptance boundary and risk are in
 
 ## Host-only analyses — not applied
 
-Three documents record host-only work that has **not** been applied to the
-device. None of them is an installed feature, a measured improvement or an
-accepted change.
+Two documents record host-only work that has **not** been applied to the device.
+Neither is an installed feature, a measured improvement or an accepted change.
+(The splash work that was in this list is now installed and accepted; it moved to
+the update section at the end of this file.)
 
-- **Splash holds for ~51 s.** The measured figure is compositor-internal: the
-  splash is removed at 51.0 s because a boot gate waits up to 45 s for a
-  Waydroid/Android readiness marker that this install never writes (the upstream
-  boot integration is not installed; the Waydroid configuration exists, so the
-  "not installed" branch is false). Sensor readiness is not the blocker. A
-  host-built compositor candidate removes the Android wait (51 s → ~6 s
-  expected, arithmetic on the saved log); it is not installed and was never run
-  on the phone. Pre-compositor boot time is not measured. Details, A/B and
-  rollback: [boot time](boot-time.md).
 - **Memory and browser.** zram (900 MB, `lz4`, `swappiness=100`) is active; the
   prepared changes are three sysctl values and one Firefox policy file, all
   reversible and none applied — [performance and memory](performance.md).
@@ -271,9 +265,135 @@ part, the run detail is not.
   [Venus](venus.md).
 - **Storage (Plan A):** Waydroid removed; former Android partitions reused for
   `/var`, `/home` and a 256 MB swap; the 9.7 GB root partition now has **4.0 GB
-  free (58 %)** where it had 851 MB. `/var` has 2.4 GB free, `/home` is tight
-  (22 MB). The first reboot needed a power cycle — that risk is open. No
-  partition paths or identifiers are published.
-- **Android apps:** Waydroid removed by owner decision; ATL feasibility says
-  binder is not a blocker, packaging (Alpine/musl vs Arch/glibc) is. An Alpine
-  chroot kit is prepared, not installed — [Waydroid](waydroid.md).
+  free (58 %)** where it had 851 MB. `/var` has 2.4 GB free; `/home` was tight
+  (19 MB free) at this point and was relieved later the same day — see the third
+  pass at the end of this file. The first reboot needed a power cycle — that risk
+  is open. No partition paths or identifiers are published.
+- **Android apps:** Waydroid removed by owner decision. The ATL feasibility note
+  at this point said binder is not a blocker and packaging (Alpine/musl vs
+  Arch/glibc) is; the later native result supersedes the packaging question —
+  see "Native Android runtime (ATL)" in the third pass and
+  [Android applications](atl-native.md).
+## Update 2026-11-15 — third pass
+
+### Boot time and splash — installed and accepted
+
+The compositor on the phone now removes its boot splash at **6.306 s** on its own
+clock instead of 51.047 s. The 51 s was a readiness gate waiting for an
+Android/Waydroid marker that this install never writes; the installed build only
+waits when that integration is present. Both numbers are compositor-internal:
+"power button to usable UI" is still not measured, and the pre-compositor boot
+(lk2nd → kernel → initramfs → systemd → greetd) has no `systemd-analyze` sample.
+The owner confirmed the change. No compositor binary or patch is published — the
+base is the local fade-tuned compositor line; details in [boot time](boot-time.md).
+
+### Boot observability — 2026-11-15
+
+Reason: this device has no pstore/ramoops, so a boot that dies before the disk
+leaves no trace — and one earlier boot needed a power cycle with no journal
+surviving it. What is installed:
+
+- three marker units: `early` (before local-fs), `mid` (after local-fs) and `ok`
+  (after multi-user, the session manager and NetworkManager, waiting up to 30 s
+  for a Wi-Fi IPv4 address). Each writes a stage line with a boot id, mount
+  sources/labels, failed units, `findmnt --verify`, `systemd-analyze`, the SSH
+  listener, sessions, the media bind mounts, swap and the boot-list revision;
+- the primary record goes to `/boot` on the root filesystem, which no mount
+  covers; `/var/log/boot-health/` is the readable copy, with a fallback to a
+  volatile directory when `/var` itself did not mount;
+- fstab timeouts for the extra filesystems raised to 10 s, and the media bind
+  mounts ordered after `/var` with `x-systemd.requires-mounts-for=/var` (the
+  previous `x-systemd.device-timeout` on bind entries was meaningless — a bind
+  mount has no device unit);
+- a session ordering drop-in so the session starts after `/home` and `/var`.
+
+One supervised reboot produced all three stages, with `ok` about **56 s** after
+boot start; mounts, the SSH wildcard listener and the session were all recorded.
+A boot that dies before the markers no longer overwrites the previous boot's
+records, which is what makes the next failure classifiable. Raw health logs are
+not published (they encode this install's partition identity).
+
+### Software renderer — 2026-11-15
+
+The compositor can render with pixman (CPU) instead of GLES2, selected by
+`WLR_RENDERER=pixman` in the session environment. Installed as a candidate; GLES2
+stays the default for a normal session.
+
+- Before the change, opening a GL surface from an Android application could take
+  the compositor down with a GPU reset. Under pixman there were **0** GPU resets
+  and the compositor stayed up (CPU about 8 %, resident about 104 MB).
+- A follow-up build fixed three defects of the software path: a 120-row black
+  band at the bottom (the lock screen was left in a slid-up position), the lock
+  screen staying drawn over an application, and unlock. The bottom
+  fully-black-row count went **120 → 0**. The lock screen now unlocks on a
+  **real finger swipe**; synthetic control-protocol swipes do not unlock on the
+  software path, which is a limitation of the test method, not of the device.
+- Not owner-accepted as the default renderer.
+- No compositor binary, source delta or kit is published: the base is the local
+  fade-tuned compositor line — see [MAP](../MAP.md).
+
+### Native Android runtime (ATL)
+
+Android applications run natively through ATL as ordinary compositor clients —
+no container, no Android image, no root, no second kernel. The image had been
+trimmed in a way that removed the Java runtime tree and the JNI bridge; both were
+restored from the image's own package store and `ztos-android doctor` reports
+OK. Observed on the phone: the demo APK, an expression evaluator, a Canvas game
+and the RPN calculator work; timerdroid runs with stub-only content; Frozen
+Bubble opens a black DMA-BUF page; 2048 is blocked on a native JNI symbol; Angry
+Birds reaches its GL thread but gets no EGL context. Full status, the API-batch
+numbers and the structural limits: [Android applications](atl-native.md); the
+method behind the batches: [compatibility factory](compat-factory.md).
+
+### Notifications, layer 1
+
+The framework path (application → NotificationManager → GNotification → D-Bus →
+notification daemon → compositor banner and centre, tap → launch/focus) is
+implemented and host-verified. The daemon and the notification-aware API jar are
+installed, but the compositor build carrying the banner was replaced by the
+software-renderer build, and the probe APK hit a stub-shadowing defect, so
+**end-to-end on the phone is not proven.** Limits: no action buttons in the
+shell, cold-start taps drop intent extras, icons come from the desktop entry,
+channels/priority/sound are stored but not enforced —
+[Android applications](atl-native.md#notifications--layer-1).
+
+### Wi-Fi SSH persistence
+
+The SSH unit used to bind address-specific sockets at start, so after a boot in
+which the interface had no IPv4 address yet there was no usable entry — the
+documented "device is up and in the network but there is no entry" state. The
+installed unit now listens on a wildcard address (`0.0.0.0:2222`) and survives a
+reboot: after the test reboot the session was back in about **12 s** and the
+wildcard listener was present. The USB path still works. No address, SSID, key or
+unit file is published.
+
+### Home space and media bind mounts
+
+`/home` was at 19 MB free (97 % used) after the storage change. `Pictures`,
+`Videos` and the gallery cache were copied to the `/var` filesystem and
+bind-mounted back, with three fstab entries marked as one block; application
+paths are unchanged. Verified after a reboot: the mounts are active and the
+gallery starts. `/home` is now at **211 MB free (56 %)**. No partition paths,
+UUIDs or fstab contents are published.
+
+### Camera — 2026-11-15, evening
+
+- **Colour v3.1 installed and measured on the phone:** 0.0 % clipped pixels, no
+  pink cast, about 21 fps in good light. The earlier AE/AWB v2 frame metrics
+  (rear R/G 1.138→1.011, front 1.152→1.050, meanY stable, sdY 12.4→3.9) were the
+  host-side measurement this build came from.
+- **Autofocus:** the retry build is installed. It stops scoring a frame until the
+  lens has moved (the previous sweep scored a frame exposed *before* the move),
+  and in the 20 cm measurement it selected the real focus peak — about position
+  300, where the old sweep chose 458 and was about 32 % softer. Debug lines are
+  available in the application log.
+- **Low light:** in a dark room autofocus is cancelled because the frame is dark
+  (mean level 0.002, gain ramps to 512, about 1 fps); a low-light AE branch is in
+  progress.
+- Colour-calibration acceptance, AE/ISO acceptance and AF feel remain
+  unaccepted: these builds are installed candidates, not accepted features.
+
+### Open gaps
+
+The ranked top-10 list of what still stands between this port and a daily phone:
+[gap audit](gap-audit.md).

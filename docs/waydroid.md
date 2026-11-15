@@ -138,24 +138,28 @@ host paths, session transcripts or screenshots are published. "Runs" here means
 a manually started session with a launched application on one boot; it does not
 mean a supported Android experience.
 
-## Removal and the ATL follow-up (2026-11-15)
+## Removal and the ATL replacement (2026-11-15)
 
 Waydroid was removed as part of the storage plan and by the owner's decision.
 Android compatibility is no longer part of the daily system; the evidence above
 is kept because the freeze/thaw findings still describe the mainline-binder
 behaviour of this kernel.
 
-The follow-up path is ATL (Android Translation Layer). Feasibility results:
+The replacement is ATL (Android Translation Layer), and it did not stay a
+feasibility study: the runtime that already ships with the ztOS image was
+repaired and runs applications natively, with no container and no Android image.
+The earlier feasibility findings were:
 
 - **binder is not a blocker.** The pinned kernel has `CONFIG_ANDROID_BINDER_IPC=y`
   and legacy `/dev/binder*` nodes; ATL does not run an Android `system_server`,
-  so no binderfs or extra kernel option is needed.
-- **Packaging is the blocker.** ATL ships for Alpine edge (musl) and ztOS is
-  Arch/glibc; there is no ready Arch aarch64 package. An Alpine aarch64 chroot
-  kit (prebuilt packages, no ART build) is prepared for the phone but **not
-  installed**; a native glibc build is a later step.
-- **Limits:** about 2 GB RAM, the `gtk4`/`webkitgtk-6.0` footprint, and lower
-  APK compatibility than a full Android container. Camera, sensors, telephony
-  and Play Services are not expected to work.
-- A demo APK was run on the host build machine only; the proprietary APK is not
-  published here.
+  so no binderfs or extra kernel option is needed. That prediction held.
+- **Packaging was the open question.** ATL ships for Alpine edge (musl) and ztOS
+  is Arch/glibc; there is no ready Arch aarch64 package. An Alpine aarch64 chroot
+  was used to prove the idea, and the native Arch/glibc packages that were
+  already in the image were then restored and became the shipping path.
+- **Limits that remain:** about 2 GB of RAM, the `gtk4`/`webkitgtk-6.0`
+  footprint, and lower APK compatibility than a full Android container. Camera,
+  telephony and Play Services are not available through ATL.
+
+What actually runs, what is blocked, the API batches and the notifications
+layer: [Android applications](atl-native.md).

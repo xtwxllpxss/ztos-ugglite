@@ -169,3 +169,58 @@ repository.
   partition paths or identifiers are published.
 - **Windows Phone study** — facts and external source URLs only
   ([docs/apps.md](docs/apps.md)); third-party screenshots stay excluded.
+## Update 2026-11-15 (publication #9)
+
+Components delivered or re-scoped after publication #8; again no build artifact,
+binary or log is added to this repository.
+
+- **Native Android runtime (ATL)** — the runtime ships with the ztOS image and is
+  not a repository artifact. What was recovered (Java tree and JNI bridge,
+  restored from the image's own package store), how an app is started, the device
+  results, the API-batch numbers, the AOSP-harvest shares, the notification layer
+  and the structural limits are published as prose in
+  [docs/atl-native.md](docs/atl-native.md). Package archives, per-run logs, frames
+  and APKs stay excluded.
+- **Compatibility factory** — the queue/generator/build/verify/deploy scripts are
+  host tools bound to private demand lists, host paths and a device transport;
+  they are not added here. The method, the numbers and the limits are published
+  in [docs/compat-factory.md](docs/compat-factory.md). The generic,
+  device-independent form is being published separately
+  (<https://github.com/xtwxllpxss/native-apk-linux>, work in progress).
+- **Notifications layer 1** — `ztnotifyd` is an upstream ztOS component, the
+  compositor change is an out-of-tree source delta, and the API side is the
+  generated jar; none of the three is a new file here. The implemented path, the
+  installed pieces and the pending end-to-end verification are stated in
+  [docs/atl-native.md](docs/atl-native.md#notifications--layer-1).
+- **Boot observability kit** — a set of systemd units, a health script, an fstab
+  timeout change and a greetd ordering drop-in, installed on this phone. The
+  status, the marker semantics and the one measured reboot are published in
+  [docs/hardware-status.md](docs/hardware-status.md#boot-observability--2026-11-15);
+  the unit files and the raw health logs are not (they encode this install's
+  partition identity).
+- **Wi-Fi SSH persistence** — the installed unit now listens on a wildcard
+  address; only that fact and the reboot result are published, no config file,
+  address, SSID or key.
+- **Home space and storage Plan A** — bind mounts and an fstab block on the
+  device. Status and free-space numbers are published
+  ([docs/hardware-status.md](docs/hardware-status.md)); no partition paths,
+  UUIDs or mount definitions.
+- **Software renderer (pixman)** — a compositor build from the local fade-tuned
+  compositor line. Not reconstructible from the published patch series, so the
+  binary and its source delta stay private; the observed status is published in
+  [docs/hardware-status.md](docs/hardware-status.md#software-renderer--2026-11-15).
+- **Gap audit** — the private audit note was rewritten in English without
+  per-device facts: [docs/gap-audit.md](docs/gap-audit.md).
+- **Browser measurement correction** — [docs/performance.md](docs/performance.md)
+  now carries the live measurement and the corrected reading of the frame trace;
+  the raw traces and the A/B scripts stay excluded.
+
+## Related public repositories (2026-11-15)
+
+- **native-apk-linux** — <https://github.com/xtwxllpxss/native-apk-linux>: generic tooling
+  for running Android APKs natively on Linux — SDK/AOSP stub generation with shadowing
+  protection, JNI shims, EGL platform probe, crash triage. Work in progress.
+- **ztmetro-android-ux** — <https://github.com/xtwxllpxss/ztmetro-android-ux>: research on the
+  alternative route — an Android base (LineageOS for Mi8917) with a ztmetro-style UX layer:
+  Android UX/UI anatomy, replacement layers (APK / RRO / framework), RAM budget on a 2 GB
+  device, and feasibility of building or injecting just SystemUI. Work in progress.
